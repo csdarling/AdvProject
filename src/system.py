@@ -65,8 +65,9 @@ class System:
     def configure_channels(self, specs):
         # EXAMPLE INPUT:
         # chl_specs = {
-        #     CCHL:  {"in": ["Alice", "Bob"], "out": ["Alice", "Bob"]},
-        #     QCHL:  {"in": ["Alice", "Bob"], "out": ["Alice", "Bob"]}
+        #     # CCHL:  {"in": ["Alice", "Bob"], "out": ["Alice", "Bob"]},
+        #     QCHL:  {"in":  [("Alice", POLARISER)],
+        #             "out": [("Bob", POLARIMETER)]}
         # }
 
         def add_chl_connections(chl_str, direction):
@@ -74,17 +75,16 @@ class System:
             a = 0 if direction == directions[0] else 1
             b = 1 if a == 0 else 0
 
-            for name in specs[chl_str][directions[a]]:
+            for name, device in specs[chl_str][directions[a]]:
                 if name in self.users:
-                    # TODO: Make an "Output" device
-                    for component_str in self.users[name].components:
-                        components = self.users[name].components
-                        if chl_str in components[component_str].connections[directions[b]]:
-                            chl.add_connections({directions[a]: components[component_str]})
-                            # output.add_connections({"out": chl})
+                    components = self.users[name].components
+                    for component_str in components:
+                        if component_str == device:
+                            chl.add_connections({directions[a]: [components[component_str]]})
 
         chls = {}
         for chl_str in specs:
+            print("Adding {}".format(chl_str))
             # Create the channel
             Chl = getattr(equipment, chl_str)
             chl = Chl(self.environment, chl_str)

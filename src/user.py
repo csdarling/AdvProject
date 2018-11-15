@@ -60,7 +60,7 @@ class User:
             self.components[POLARIMETER].activate()
 
         else:
-            raise Exception("{} doesn't have a Photon Measurement Device.".format(self.name))
+            raise Exception("{} doesn't have a Polarimeter.".format(self.name))
 
     def stop_measuring_photons(self):
 
@@ -68,8 +68,16 @@ class User:
             self.components[POLARIMETER].deactivate()
 
         else:
-            raise Exception("{} doesn't have a Photon Measurement Device.".format(self.name))
+            raise Exception("{} doesn't have a Polarimeter.".format(self.name))
 
+    def read_measurement(self):
+
+        if POLARIMETER in self.components:
+            bit = self.components[POLARIMETER].current_measurement
+            print("Received bit: {}".format(bit))
+
+        else:
+            raise Exception("{} doesn't have a Polarimeter.".format(self.name))
 
 # class PhotonSender(User):
 
