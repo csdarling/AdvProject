@@ -7,13 +7,16 @@ from math import cos, sin, pi, floor, isclose
 
 class Photon:
 
-    def __init__(self, destination, uid):
+    def __init__(self, destination, uid, location):
         self.uid = uid
+        self.location = location
         self._destination = destination
         self._polarisation_axis = None
         self._progress()
 
     def _progress(self):
+        if hasattr(self._destination, "label"):
+            self.location = self._destination.label
         self._destination, progress = self._destination.handle_photon(self)
         if progress:
             self._progress()

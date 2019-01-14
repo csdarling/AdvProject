@@ -1,18 +1,53 @@
 # Equipment strings
+BB84 = "Bb84"
+CLASSICALIO = "ClassicalIO"
+PHOTONDEVICE = "PhotonDevice"
 PHOTONSRC = "PhotonSource"
 SPS = "SinglePhotonSource"
 POLARISER = "Polariser"
 PHOTONDETECTOR = "PhotonDetector"
 POLARIMETER = "Polarimeter"
+PHOTONIO = "PhotonIO"
 CCHL = "ClassicalChannel"
 QCHL = "QuantumChannel"
 
 EQUIPMENT_STRS = [
+    BB84,
+    CLASSICALIO,
+    PHOTONDEVICE,
     PHOTONSRC,
     SPS,
     POLARISER,
     PHOTONDETECTOR,
     POLARIMETER,
+    PHOTONIO,
     CCHL,
     QCHL
+]
+
+# Message format
+IDX_MSG_RECIPIENT   = 0
+IDX_MSG_SENDER      = 1
+IDX_MSG_CONTENTS    = 2
+# IDX_MSG_ATTACHMENTS = 3
+
+# Messages
+MSG_START_SENDING_PHOTONS = 0
+MSG_STOP_SENDING_PHOTONS  = 1
+MSG_START_BB84            = 2
+MSG_ACK                   = 3
+MSG_COMPARE_TIMESTAMPS    = 4
+MSG_COMPARE_BASES         = 5
+MSG_COMPARE_BITS          = 6
+MSG_BITS_MATCH            = 7
+
+MESSAGES = [
+    MSG_START_SENDING_PHOTONS,
+    MSG_STOP_SENDING_PHOTONS,
+    MSG_START_BB84,
+    MSG_ACK,
+    MSG_COMPARE_TIMESTAMPS,
+    MSG_COMPARE_BASES,
+    MSG_COMPARE_BITS,
+    MSG_BITS_MATCH
 ]

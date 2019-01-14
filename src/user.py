@@ -3,6 +3,7 @@
 import equipment
 from consts import (
     EQUIPMENT_STRS,
+    BB84,
     PHOTONSRC,
     SPS,
     POLARISER,
@@ -79,22 +80,21 @@ class User:
         else:
             raise Exception("{} doesn't have a Polarimeter.".format(self.name))
 
-# class PhotonSender(User):
+    def bb84_sender(self, target, n):
+        bb84 = self.components[BB84]
+        bb84.run_sender_protocol(target, n)
 
-#     def __init__(self, name="Alice"):
-#         self.name = name
-#         self.components = {
-#             "SPS": equipment.SinglePhotonSource(),
-#             "Polariser": equipment.Polariser()
-#         }
+    def bb84_receiver(self, n):
+        bb84 = self.components[BB84]
+        bb84.run_receiver_protocol(n)
 
+    def bb84(self, target):
+        NUM_BITS = 4
 
-# class PhotonReceiver(User):
+        bb84 = self.components[BB84]
+        # Alert the receiver over the classical channel
 
-#     def __init__(self, name="Bob"):
-#         self.name = name
-#         self.components = {
-#             "PhotonDetector": equipment.PhotonDetector(),
-#             "PhotonMeasurement": equipment.PhotonMeasurementDevice()
-#         }
+        # Wait for a response
 
+        # Run the protocol
+        bb84.run(target, n)
