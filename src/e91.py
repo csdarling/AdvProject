@@ -6,12 +6,17 @@ import components
 from math import log, ceil
 
 
-class BB84:
+class E91:
 
     def __init__(self, eve=False, min_key_length=0):
         self.min_key_length = min_key_length
         alice = components.Party(0, "Alice", cchl=self)
         bob = components.Party(1, "Bob", cchl=self)
+
+        # ADDED ####################################
+        epr_source = components.EPRPairSource()
+        ############################################
+
         qchl = components.QuantumChannel()
 
         qchl.add_socket(alice.uid, alice.socket)
@@ -24,6 +29,9 @@ class BB84:
         self.alice = alice
         self.bob = bob
         self.qchl = qchl
+        # ADDED ####################################
+        self.epr_source = epr_source
+        ############################################
 
         self.eve = None
         if eve:
@@ -35,6 +43,9 @@ class BB84:
     def reset(self):
         self.alice.reset()
         self.bob.reset()
+        # ADDED ####################################
+        self.epr_source.reset()
+        ############################################
 
         if self.eve is not None:
             self.eve.reset()
@@ -48,7 +59,9 @@ class BB84:
         eve = self.eve
 
         print()
-        print("Total qubits sent:  {}".format(alice.total_qubits_sent))
+        # EDITED #########################################################
+        print("Total qubits sent:  {}".format(self.epr_source.total_sent))
+        ##################################################################
         print("Sifted key length:  {}".format(bob.sifted_key_length))
         print()
         print("Alice's bits:       {}".format(alice.bits))
@@ -72,7 +85,10 @@ class BB84:
         if self.eve_check_complete:
             self.eve_check_complete = False
 
-        self.alice.send_qubit()
+        # EDITED ####################################
+        self.epr_source.send_qubit(self.alice.socket,
+                                   self.bob.socket)
+        #############################################
 
         if display_data:
             self.display_data()
@@ -81,8 +97,11 @@ class BB84:
         if self.eve_check_complete:
             self.eve_check_complete = False
 
+        # EDITED ########################################
         for i in range(n):
-            self.alice.send_qubit()
+            self.epr_source.send_qubit(self.alice.socket,
+                                       self.bob.socket)
+        #################################################
 
         if display_data:
             self.display_data()
@@ -141,10 +160,6 @@ class BB84:
         eve.set_target(self.bob.uid)
         self.eve = eve
 
-    def remove_eve(self):
-        # TODO
-        pass
-
     def calculate_num_eve_check_bits(self, security):
         return ceil(log(1 - security) / log(0.75))
 
@@ -164,6 +179,33 @@ class BB84:
                 value = value_attempt
 
         return value
+
+        if self.eve_check_complete:
+            return
+
+        num_bits = self.calculate_num_eve_check_bits(security)
+        sifted_key_length = self.alice.sifted_key_length
+
+        if sifted_key_length - num_bits < self.min_key_length:
+            print("Not enough bits to run eavesdropping test.\n")
+
+        else:
+            idxs = sorted(random.sample(self.alice.sifted_key_idxs, num_bits))
+            self.alice.add_check_bits(idxs)
+            self.bob.add_check_bits(idxs)
+
+            print("Alice's check bits: {}".format(self.alice.format_check_bits()))
+            print("Bob's check bits:   {}".format(self.bob.format_check_bits()))
+
+            if self.alice.check_bits == self.bob.check_bits:
+                print("\nKey security: {:.3f}%.\n".format(security * 100))
+                print("Secret key:         {}\n".format(self.alice.format_secret_key()))
+                self.eve_check_complete = True
+                self.secret_key = self.alice.secret_key
+
+            else:
+                print("\nEavesdropping detected! Aborting this run of the protocol.\n")
+                self.reset()
 
     def check_for_eve(self, security=0.95):
         if self.eve_check_complete:
@@ -194,36 +236,13 @@ class BB84:
                 self.reset()
 
     def compare_bases(self):
-        match = False
-        if self.alice.bases[-1] == self.bob.bases[-1]:
-            match = True
+        # ADDED ########################################
+        if len(self.alice.bases) == len(self.bob.bases):
+        ################################################
 
-        self.alice.update_sifted_key(match)
-        self.bob.update_sifted_key(match)
+            match = False
+            if self.alice.bases[-1] == self.bob.bases[-1]:
+                match = True
 
-
-# def symbolise(value):
-#     utf_8 = (sys.getdefaultencoding() == "utf-8")
-#     pi_str = "\u03C0" if utf_8 else "pi"
-
-#     if value == pi:
-#         value = pi_str
-
-#     elif value == 3 * pi / 4:
-#         value = "3{}/4".format(pi_str)
-
-#     elif value == pi / 2:
-#         value = "{}/2".format(pi_str)
-
-#     elif value == pi / 4:
-#         value = "{}/4".format(pi_str)
-
-#     return value
-
-# def is_unitary(M):
-#     shape = M.shape
-#     if shape[0] != shape[1]:
-#         return False
-
-#     dim = shape[0]
-#     return np.allclose(np.eye(dim), M @ M.T.conj())
+            self.alice.update_sifted_key(match)
+            self.bob.update_sifted_key(match)
