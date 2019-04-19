@@ -4,250 +4,612 @@ import random
 import string
 import time
 import copy
+import math
 
 import components
 import shared_fns
 import consts
 
+from pprint import pprint
+
 party_names = string.ascii_uppercase[:4] + string.ascii_uppercase[5:]
+
+class UIComponent:
+
+    def __init__(self):
+        self.reset()
+        self.ui_in_replay_mode = True
+
+    def reset(self):
+        self.ui_timestep = 0
+        self.ui_stored_data = {}
+
+    def ui_tick(self, data={}):
+        '''Store the data and progress to the next timestep.'''
+        if not self.ui_in_replay_mode:
+            self.ui_stored_data[self.ui_timestep] = data
+
+        next_timestep = self.ui_timestep + 1
+        if next_timestep not in self.ui_stored_data:
+            self.log[next_timestep] = {}
+            self.ui_in_replay_mode = False
+
+        self.ui_timestep += 1
+
+    def ui_toggle_replay(self):
+        self.ui_in_replay_mode = not self.ui_in_replay_mode
+
+    def ui_rewind_to_timestep(self, timestep):
+        if timestep in self.ui_stored_data:
+            # If not in replay mode, then only keep the stored data up to the
+            # specified timestep.
+            if not self.ui_in_replay_mode:
+                ui_stored_data = {}
+                for t in range(timestep):
+                    ui_stored_data[t] = self.ui_stored_data[t]
+                self.ui_stored_data = ui_stored_data
+            self.ui_timestep = timestep
 
 
 class KPartyBB84:
 
-    def __init__(self, k, edges=None, protocol=0):
+    def __init__(self, k=None, edges=None, protocol=2, animation=True, check_bit_prob=0.2):
         self.cchl = ClassicalChannel()
-        self.network_manager = NetworkManager(k, self.cchl, edges=edges)
-        self.cchl.add_network_manager(self.network_manager)
-
-        if protocol == 0:
-            self.protocol = self.chained_protocol
-        else:
-            raise NotImplementedError()
-
-        # self.secret_key = ""
-        self.total_qubits_sent = 0
-        self.current_step = 0
+        self.set_protocol(protocol, k, edges, animation, check_bit_prob)
+        self.timestep = 0
 
     def reset(self):
         self.network_manager.reset()
         self.cchl.reset()
-        # self.secret_key = ""
-        self.total_qubits_sent = 0
-        self.current_step = 0
+        self.timestep = 0
+        self.running_protocol = True
 
-    def chained_protocol(self):
+    def set_protocol(self, protocol, k=None, edges=None, animation=True, check_bit_prob=0.2):
+        '''Choose which protocol to run.'''
+        if k is None and edges is None:
+            # TODO Raise a more precise type of exception.
+            raise Exception("Either k or edges must be specified.")
+
+        # If k is not set then it defaults to the maximum node uid in edges.
+        if k is None:
+            k = max([max((a, b) for a, b in edges)])
+
+        # Chained BB84 Protocol
+        if protocol == 0:
+            self.protocol = self.chained_protocol
+            # If edges has not been specified, then set it to default chain.
+            if edges is None:
+                edges = [(i, i + 1) for i in range(k - 1)]
+
+        # Star Graph BB84 Protocol 1
+        elif protocol == 1:
+            self.protocol = self.star_graph_protocol_1
+            # If edges has not been specified, then set it to default star.
+            if edges is None:
+                edges = [(0, i + 1) for i in range(k - 1)]
+
+        # Star Graph BB84 Protocol 2
+        elif protocol == 2:
+            self.protocol = self.star_graph_protocol_2
+            # If edges has not been specified, then set it to default star.
+            if edges is None:
+                edges = [(0, i + 1) for i in range(k - 1)]
+
+        else:
+            # TODO Add an error message.
+            raise NotImplementedError()
+
+        self.network_manager = NetworkManager(self.cchl, edges)
+        self.protocol_params = {"animation": animation,
+                                "check_bit_prob": check_bit_prob}
+        self.running_protocol = True
+
+    def chained_protocol(self, animation=True, check_bit_prob=0.2):
+        '''Run the chained BB84 protocol.'''
+        # TODO Check that the given network is actually a chain, i.e. that
+        # every party has exactly one predecessor (except for the party at the
+        # start of the chain, which has none) and one successor (except for
+        # the party at the end of the chain, which has none).
+        protocol_secure = True
         parties = self.network_manager.get_parties()
-        # Every party sends a qubit to each of its recipients at approximately
-        # the same time.
-        for party_A_uid in parties:
-            party_A = parties[party_A_uid]
-            successors = self.network_manager.get_successors(party_A_uid)
 
-            # The party sends a qubit to each of its successors.
-            for party_B_uid in successors:
-                party_B = parties[party_B_uid]
+        # Find the uid of the first party in the chain.
+        first_party_uid = None
+        for uid in parties:
+            predecessors = self.network_manager.get_predecessors(uid)
+            if not predecessors:
+                first_party_uid = uid
+                break
 
-                # Party A chooses a random bit.
-                bit_A = random.choice([0, 1])
+        if first_party_uid is None:
+            # TODO Raise a more precise type of exception.
+            raise Exception("The chain must have a first party.")
 
-                # Both parties choose a basis.
-                basis_A = None
-                # If party_A has already measured a qubit w.r.t. a basis, then
-                # use the same basis
-                for uid in party_A.rx_bases:
-                    rx_bases = party_A.rx_bases[uid]
-                    if self.current_step < len(rx_bases):
-                        basis_A = rx_bases[self.current_step]
+        # Set a random measurement basis for each receiving party
+        # (i.e. every party except the first party in the chain).
+        for uid in parties:
+            if uid != first_party_uid:
+                # Choose randomly between the standard and Hadamard bases.
+                basis = random.choice([consts.STANDARD_BASIS,
+                                       consts.HADAMARD_BASIS])
+                # Record that the next qubit received by this party should be
+                # measured w.r.t. this basis.
+                predecessor_uid = self.network_manager.get_predecessors(uid)[0]
+                parties[uid].next_qubit_is_from(predecessor_uid)
+                parties[uid].measure_next_qubit_wrt(basis)
+                # After measurement, the qubit should be forwarded to the next
+                # party in the chain.
+                successors = self.network_manager.get_successors(uid)
+                if successors:
+                    successor_uid = successors[0]
+                    parties[uid].forward_qubits_to(successor_uid)
 
-                if basis_A is None:
-                    # print("Party {} choosing random tx basis".format(party_A.name))
-                    basis_A = random.choice([consts.STANDARD_BASIS,
-                                             consts.HADAMARD_BASIS])
-
-                basis_B = None
-                for uid in party_B.tx_bases:
-                    tx_bases = party_B.tx_bases[uid]
-                    if self.current_step < len(tx_bases):
-                        basis_B = tx_bases[self.current_step]
-
-                if basis_B is None:
-                    # print("Party {} choosing random rx basis".format(party_B.name))
-                    basis_B = random.choice([consts.STANDARD_BASIS,
-                                             consts.HADAMARD_BASIS])
-
-                # Party B will measure the next qubit it receives (just from A??)
-                # w.r.t. this random basis.
-                party_B.set_next_sender_uid(party_A_uid)
-                party_B.set_next_measurement_basis(basis_B, party_A_uid)
-
-                # Party A encodes the bit as a qubit w.r.t its random basis,
-                # and send this qubit to party B.
-                party_A.send_qubit(party_B_uid, bit_A, basis_A)
-                self.total_qubits_sent += 1
-                time.sleep(0.005)
+        # The first party in the chain generates a qubit using a random bit
+        # and a random basis, and transmits it to the next party in the chain.
+        first_party = parties[first_party_uid]
+        bit = random.choice([0, 1])
+        basis = random.choice([consts.STANDARD_BASIS, consts.HADAMARD_BASIS])
+        successors = self.network_manager.get_successors(first_party_uid)
+        if not successors:
+            # TODO Raise a more precise type of exception.
+            raise Exception("The first party in the chain doesn't have a successor.")
+        successor_uid = successors[0]
+        first_party.send_qubit(successor_uid, bit, basis)
 
         # Each party publicly announces the basis it used.
-        for party_uid in parties:
-            party = parties[party_uid]
-            if party.rx_bases:
-                party.broadcast_rx_bases(self.current_step)
-            else:
-                party.broadcast_tx_bases(self.current_step)
+        first_party.broadcast_tx_bases(self.timestep)
+        for uid in parties:
+            if uid != first_party_uid:
+                parties[uid].broadcast_rx_bases(self.timestep)
 
-        # If all the bases match, then add the corresponding bit to the sifted key.
-        bases = self.cchl.get_bases(self.current_step)
-        comparison = [bases[0]] * len(bases)
-        bases_match = all(np.allclose(bases[i], comparison[i]) for i in range(len(bases)))
+        # Check whether all the parties used the same basis.
+        tx_bases = self.cchl.get_tx_bases(self.timestep)
+        rx_bases = self.cchl.get_rx_bases(self.timestep)
+        first_party_tx_basis = tx_bases[first_party_uid][successor_uid]
+
+        bases_match = True
+        for rx_uid in rx_bases:
+            measurement_bases = rx_bases[rx_uid]
+            for tx_uid in measurement_bases:
+                meas_basis = measurement_bases[tx_uid]
+                if not np.allclose(meas_basis, first_party_tx_basis):
+                    bases_match = False
+                    break
+            if not bases_match:
+                break
+
+        # If all the bases match, then add the bit to the sifted key.
         if bases_match:
-            # Each party publicly announces if its recipient(s) need to flip
-            # the received bit value.
-            for party_A_uid in parties:
-                party_A = parties[party_A_uid]
-                for party_B_uid in party_A.rx_bits:
-                    for party_C_uid in party_A.tx_bits:
-                        party_C = parties[party_C_uid]
-                        flip_bool = False
-                        rx_bit = party_A.rx_bits[party_B_uid][self.current_step]
-                        tx_bit = party_A.tx_bits[party_C_uid][self.current_step]
-                        if rx_bit != tx_bit:
-                            flip_bool = True
-                        party_A.broadcast_flip_instruction(party_C_uid, self.current_step, flip_bool)
-                        party_C.broadcast_flip_instruction(party_A_uid, self.current_step, flip_bool)
+            for uid in parties:
+                parties[uid].add_all_bits_to_keys()
 
-            for party_uid in parties:
-                party = parties[party_uid]
-                # print("\nParty {} ({}) retrieving flip instruction".format(party_uid, party.name))
-                party.retrieve_flip_instruction(self.current_step)
-                # print("\nParty {} ({}) extending secret keys".format(party_uid, party.name))
-                party.extend_secret_keys()
+            # If running as an animation, then the sifted key bits from this
+            # timestep are used as check bits with probability check_bit_prob.
+            if animation:
+                random_num = random.random()
+                if random_num < check_bit_prob:
+                    # Add the current bit to the check bits.
+                    for uid in parties:
+                        successors = self.network_manager.get_successors(uid)
+                        predecessors = self.network_manager.get_predecessors(uid)
+                        if predecessors:
+                            parties[uid].add_check_bit(predecessors[0])
+                        if successors:
+                            parties[uid].add_check_bit(successors[0])
+
+                    # Each party broadcasts all of their check bits and tests
+                    # for eavesdropping.
+                    for uid in parties:
+                        # This party broadcasts its check bits.
+                        parties[uid].broadcast_check_bits()
+                        predecessors = self.network_manager.get_predecessors(uid)
+                        if predecessors:
+                            predecessor_uid = predecessors[0]
+                            # This party retrieves its predecessor's check bits
+                            # from the cchl and tests for eavesdropping.
+                            parties[uid].receive_check_bits(predecessor_uid)
+                            # The predecessor retrieves this party's check bits
+                            # from the cchl and tests for eavesdropping.
+                            parties[predecessor_uid].receive_check_bits(uid)
+
+                        # If the party has detected eavesdropping, then abort
+                        # the run of the protocol.
+                        if parties[uid].detected_eavesdropping:
+                            print("\nEavesdropping detected!\n")
+                            protocol_secure = False
+                            return protocol_secure
+
+        # Remove all check bits from the secret keys.
+        for uid in parties:
+            parties[uid].synch_sifted_and_secret_keys()
+            parties[uid].remove_check_bits_from_secret_keys()
+
+        return protocol_secure
+
+    def star_graph_protocol_1(self, animation=True, check_bit_prob=0.2):
+        '''Run BB84 Star Graph Protocol 1.'''
+        # TODO Check that the given network is a star graph.
+        protocol_secure = True
+        parties = self.network_manager.get_parties()
+
+        # Find the uid of the protocol leader.
+        leader_uid = None
+        for uid in parties:
+            is_leader = True
+            successors = self.network_manager.get_successors(uid)
+            for other_uid in parties:
+                if other_uid != uid:
+                    if other_uid not in successors:
+                        is_leader = False
+                        break
+            if is_leader:
+                leader_uid = uid
+
+        if leader_uid is None:
+            # Raise a more precise type of exception.
+            raise Exception("The given network doesn't have a leader.")
+
+        # Set a random measurement basis for each receiving party
+        # (i.e. every party except the leader).
+        for uid in parties:
+            if uid != leader_uid:
+                basis = random.choice([consts.STANDARD_BASIS,
+                                       consts.HADAMARD_BASIS])
+                parties[uid].next_qubit_is_from(leader_uid)
+                parties[uid].measure_next_qubit_wrt(basis)
+
+        # The leader generates and transmits a qubit for each of the other
+        # parties using different random bits and bases.
+        leader = parties[leader_uid]
+        successors = self.network_manager.get_successors(leader_uid)
+        for successor_uid in successors:
+            bit = random.choice([0, 1])
+            basis = random.choice([consts.STANDARD_BASIS,
+                                   consts.HADAMARD_BASIS])
+            leader.send_qubit(successor_uid, bit, basis)
+
+        # Each party publicly announces the basis it used.
+        leader.broadcast_tx_bases(self.timestep)
+        for uid in parties:
+            if uid != leader_uid:
+                parties[uid].broadcast_rx_bases(self.timestep)
+
+        # Check whether each party measured w.r.t. the same basis that the
+        # leader used in the generation of its qubit.
+        tx_bases = self.cchl.get_tx_bases(self.timestep)
+        rx_bases = self.cchl.get_rx_bases(self.timestep)
+
+        bases_match = True
+        for rx_uid in tx_bases[leader_uid]:
+            tx_basis = tx_bases[leader_uid][rx_uid]
+            rx_basis = rx_bases[rx_uid][leader_uid]
+            if not np.allclose(tx_basis, rx_basis):
+                bases_match = False
+                break
+
+        # If all the bases pairs match, then add the bit to the sifted key.
+        if bases_match:
+            for uid in parties:
+                parties[uid].add_all_bits_to_keys()
+
+            # If running as an animation, then the sifted key bits from this
+            # timestep are used as check bits with probability check_bit_prob.
+            if animation:
+                random_num = random.random()
+                if random_num < check_bit_prob:
+                    # Add the current bit to the check bits.
+                    for uid in successors:
+                        leader.add_check_bit(uid)
+                        parties[uid].add_check_bit(leader_uid)
+
+                    # The parties with matching bases broadcast all of their
+                    # check bits and test for eavesdropping.
+                    leader.broadcast_check_bits()
+                    for uid in successors:
+                        parties[uid].receive_check_bits(leader_uid)
+                        parties[uid].broadcast_check_bits()
+                        leader.receive_check_bits(uid)
+                        if leader.detected_eavesdropping:
+                            print("\nEavesdropping detected!\n")
+                            protocol_secure = False
+                            return protocol_secure
+
+        # Remove all check bits from the secret keys.
+        for uid in parties:
+            parties[uid].remove_check_bits_from_secret_keys()
+
+        # The protocol leader, who knows all of the secret keys, broadcasts
+        # instructions about which bits of which keys need to be flipped so
+        # that all of the parties share the same secret key.
+        leader.broadcast_flip_bit_instructions(successors[0])
+        for uid in successors:
+            parties[uid].receive_flip_bit_instructions(leader_uid)
+
+        return protocol_secure
+
+    def star_graph_protocol_2(self, animation=True, check_bit_prob=0.2):
+        '''Run BB84 Star Graph Protocol 2.'''
+        # TODO Check that the given network is a star graph.
+        protocol_secure = True
+        parties = self.network_manager.get_parties()
+
+        # Find the uid of the protocol leader.
+        leader_uid = None
+        for uid in parties:
+            is_leader = True
+            successors = self.network_manager.get_successors(uid)
+            for other_uid in parties:
+                if other_uid != uid:
+                    if other_uid not in successors:
+                        is_leader = False
+                        break
+            if is_leader:
+                leader_uid = uid
+
+        if leader_uid is None:
+            # Raise a more precise type of exception.
+            raise Exception("The given network doesn't have a leader.")
+
+        # Set a random measurement basis for each receiving party
+        # (i.e. every party except the leader).
+        for uid in parties:
+            if uid != leader_uid:
+                basis = random.choice([consts.STANDARD_BASIS,
+                                       consts.HADAMARD_BASIS])
+                parties[uid].next_qubit_is_from(leader_uid)
+                parties[uid].measure_next_qubit_wrt(basis)
+
+        # The leader generates and transmits a qubit for each of the other
+        # parties using different random bits and bases.
+        leader = parties[leader_uid]
+        successors = self.network_manager.get_successors(leader_uid)
+        for uid in successors:
+            bit = random.choice([0, 1])
+            basis = random.choice([consts.STANDARD_BASIS,
+                                   consts.HADAMARD_BASIS])
+            leader.send_qubit(uid, bit, basis)
+
+        # Each party publicly announces the basis it used.
+        leader.broadcast_tx_bases(self.timestep)
+        for uid in successors:
+            parties[uid].broadcast_rx_bases(self.timestep)
+
+        # Check whether each party measured w.r.t. the same basis that the
+        # leader used in the generation of its qubit.
+        tx_bases = self.cchl.get_tx_bases(self.timestep)
+        rx_bases = self.cchl.get_rx_bases(self.timestep)
+        rx_uids_with_correct_basis = []
+        for rx_uid in tx_bases[leader_uid]:
+            tx_basis = tx_bases[leader_uid][rx_uid]
+            rx_basis = rx_bases[rx_uid][leader_uid]
+            if np.allclose(tx_basis, rx_basis):
+                rx_uids_with_correct_basis.append(rx_uid)
+
+        # If any of the basis pairs match, then add the bit to the sifted key.
+        if rx_uids_with_correct_basis:
+            for uid in successors:
+                if uid in rx_uids_with_correct_basis:
+                    leader.add_bit_to_keys(uid)
+                    parties[uid].add_bit_to_keys(leader_uid)
+                else:
+                    parties[uid].synch_sifted_and_secret_keys()
+
+        # If running as an animation, then the sifted key bits from this
+        # timestep are used as check bits with probability check_bit_prob.
+        if animation:
+            random_num = random.random()
+            if random_num < check_bit_prob:
+                # Add the current bit to the check bits.
+                for uid in rx_uids_with_correct_basis:
+                    leader.add_check_bit(uid)
+                    parties[uid].add_check_bit(leader_uid)
+
+                # The parties with matching bases broadcast all of their check
+                # bits and test for eavesdropping.
+                if rx_uids_with_correct_basis:
+                    leader.broadcast_check_bits()
+                for uid in rx_uids_with_correct_basis:
+                    parties[uid].receive_check_bits(leader_uid)
+                    parties[uid].broadcast_check_bits()
+                    leader.receive_check_bits(uid)
+                    if leader.detected_eavesdropping:
+                        print("\nEavesdropping detected!\n")
+                        protocol_secure = False
+                        return protocol_secure
+
+        # Remove all check bits from the secret keys.
+        for uid in parties:
+            parties[uid].remove_check_bits_from_secret_keys()
+
+        # The protocol leader, who knows all of the secret keys, broadcasts
+        # instructions about which bits of which keys need to be flipped so
+        # that all of the parties share the same secret key.
+        leader.broadcast_flip_bit_instructions(successors[0])
+        for uid in successors:
+            parties[uid].receive_flip_bit_instructions(leader_uid)
+
+        # Currently, the secret keys for each party may be different lengths.
+        # The protocol leader broadcasts the shortest of these lengths and all
+        # parties truncate their secret keys to this length.
+        leader.broadcast_key_length()
+        for uid in successors:
+            parties[uid].receive_msg_key_length(leader_uid)
+
+        return protocol_secure
 
     def run_one_step(self, display_data=True):
-        self.protocol()
+        '''Run one iteration of the protocol.'''
+        if self.running_protocol:
+            protocol_secure = self.protocol(**self.protocol_params)
+            self.running_protocol = protocol_secure
 
-        self.current_step += 1
+            if display_data:
+                self.display_data()
 
-        if display_data:
-            self.display_data()
+            if protocol_secure:
+                self.timestep += 1
+                self.cchl.timestep += 1
+                parties = self.network_manager.get_parties()
+                for uid in parties:
+                    parties[uid].timestep += 1
 
-    def run_n_steps(self, n):
-        for i in range(n):
+    def run_n_steps(self, n, display_bits=True):
+        '''Run n iterations of the protocol.'''
+        count = 0
+        while self.running_protocol and count < n:
             self.run_one_step(display_data=False)
-
-        self.display_data()
+            count += 1
+        self.display_data(display_bits)
 
     def run(self):
         pass
 
-    def display_data_old(self):
-        parties = self.get_parties()
-        print("Total qubits sent:  {}".format(self.total_qubits_sent))
-        print("Sifted key length:  {}\n".format(parties[0].sifted_key_length))
+    def calculate_qubit_counts(self):
+        '''
+        Sum the qubit counts for all the parties in the network.
 
-        for uid in parties:
-            party = parties[uid]
-            print("{}'s tx bits:    {}".format(party.name, party.tx_bits))
-            print("{}'s rx bits:    {}".format(party.name, party.rx_bits))
-            print("{}'s bases:      {}\n".format(party.name, party.bases))
+        Calculate how many qubits have been generated, transmitted and
+        received in total across the entire network.
 
-        for uid in parties:
-            party = parties[uid]
-            print("{}'s sifted key: {}".format(party.name, party.format_sifted_key()))
+        :return: a tuple of the three qubit totals
+        '''
+        total_qubits_generated = 0
+        total_qubits_transmitted = 0
+        total_qubits_received = 0
 
-        print()
-
-    def display_data(self):
         parties = self.network_manager.get_parties()
+        for party_uid in parties:
+            party = parties[party_uid]
+            total_qubits_generated += party.total_qubits_generated
+            total_qubits_transmitted += party.total_qubits_transmitted
+            total_qubits_received += party.total_qubits_received
 
-        print("Protocol iterations: {}".format(self.current_step))
-        print("Total qubits sent:   {}".format(self.total_qubits_sent))
+        return (total_qubits_generated,
+                total_qubits_transmitted,
+                total_qubits_received)
 
-        party0_lens = parties[0].secret_keys_lengths
-        party0_lens_uids = list(party0_lens.keys())
-        key_length = 0
-        if party0_lens_uids:
-            key_length = party0_lens[party0_lens_uids[0]]
+    def display_data(self, display_bits=True):
+        '''Print the protocol data to the terminal.'''
+        parties = self.network_manager.get_parties()
+        qubit_counts = self.calculate_qubit_counts()
 
-        print("Secret key length:   {}".format(key_length))
+        print("Protocol iterations: {}".format(self.timestep))
+        print("Generated qubits:    {}".format(qubit_counts[0]))
+        print("Transmitted qubits:  {}".format(qubit_counts[1]))
+        print("Received qubits:     {}".format(qubit_counts[2]))
 
-        for party_A_uid in parties:
-            party_A = parties[party_A_uid]
-            if party_A.tx_bits:
-                print("\nParty {} (tx)".format(party_A.name))
+        min_key_length = math.inf
+        for uidA in parties:
+            partyA = parties[uidA]
+            secret_keys = partyA.secret_keys
+            if not secret_keys:
+                min_key_length = 0
+                break
+            secret_keys_by_uid = shared_fns.reorder_by_uid(secret_keys)
+            for uidB in secret_keys_by_uid:
+                key_length = len(list(secret_keys_by_uid[uidB]))
+                if key_length < min_key_length:
+                    min_key_length = key_length
 
-            for party_B_uid in party_A.tx_bits:
-                party_B = parties[party_B_uid]
-                tx_bits = party_A.tx_bits[party_B_uid]
-                tx_bits_str = shared_fns.convert_list_to_string(tx_bits)
-                tx_bases = party_A.tx_bases[party_B_uid]
-                tx_bases_chars = self.represent_bases_by_chars(tx_bases)
-                tx_bases_str = shared_fns.convert_list_to_string(tx_bases_chars)
+        print("Secret key length:   {}".format(min_key_length))
 
-                print("    {} -> {}:  {}".format(party_A.name, party_B.name,
-                                                   tx_bits_str))
-                print("             {}".format(tx_bases_str))
+        if not display_bits:
+            return
 
-            if party_A.rx_bits:
-                print("\nParty {} (rx)".format(party_A.name))
+        # Display the tx/rx bits & bases for each party.
+        for uidA in parties:
+            partyA = parties[uidA]
+            # Display the tx bits & bases, if they exist.
+            if partyA.tx_bits:
+                print("\nParty {} (tx)".format(partyA.name))
+                tx_bits = shared_fns.reorder_by_uid(partyA.tx_bits)
+                tx_bases = shared_fns.reorder_by_uid(partyA.tx_bases)
+                tx_bits_str = shared_fns.convert_dod_to_dos(tx_bits)
+                tx_bases_chars = shared_fns.represent_bases_by_chars(tx_bases)
+                tx_bases_str = shared_fns.convert_dod_to_dos(tx_bases_chars)
 
-            for party_B_uid in party_A.rx_bits:
-                party_B = parties[party_B_uid]
-                rx_bits = party_A.rx_bits[party_B_uid]
-                rx_bits_str = shared_fns.convert_list_to_string(rx_bits)
-                rx_bases = party_A.rx_bases[party_B_uid]
-                rx_bases_chars = self.represent_bases_by_chars(rx_bases)
-                rx_bases_str = shared_fns.convert_list_to_string(rx_bases_chars)
+                for uidB in tx_bits:
+                    partyB = parties[uidB]
+                    partyB_tx_bits_str = tx_bits_str[uidB]
+                    partyB_tx_bases_str = tx_bases_str[uidB]
 
-                print("    {} -> {}:  {}".format(party_B.name, party_A.name,
-                                                    rx_bits_str))
-                print("             {}".format(rx_bases_str))
+                    print("    {} -> {}:  {}".format(partyA.name,
+                                                     partyB.name,
+                                                     partyB_tx_bits_str))
 
+                    print("             {}".format(partyB_tx_bases_str))
+
+            # Display the rx bits & bases, if they exist.
+            if partyA.rx_bits:
+                print("\nParty {} (rx)".format(partyA.name))
+                rx_bits = shared_fns.reorder_by_uid(partyA.rx_bits)
+                rx_bases = shared_fns.reorder_by_uid(partyA.rx_bases)
+                rx_bits_str = shared_fns.convert_dod_to_dos(rx_bits)
+                rx_bases_chars = shared_fns.represent_bases_by_chars(rx_bases)
+                rx_bases_str = shared_fns.convert_dod_to_dos(rx_bases_chars)
+
+                for uidB in rx_bits:
+                    partyB = parties[uidB]
+                    partyB_rx_bits_str = rx_bits_str[uidB]
+                    partyB_rx_bases_str = rx_bases_str[uidB]
+
+                    print("    {} -> {}:  {}".format(partyB.name,
+                                                     partyA.name,
+                                                     partyB_rx_bits_str))
+
+                    print("             {}".format(partyB_rx_bases_str))
+
+        # Display the sifted keys.
         print("\n")
-        for party_A_uid in parties:
-            party_A = parties[party_A_uid]
-            for party_B_uid in party_A.secret_keys:
-                party_B = parties[party_B_uid]
+        for uidA in parties:
+            partyA = parties[uidA]
+            sifted_keys = partyA.sifted_keys
+            sifted_keys_by_uid = shared_fns.reorder_by_uid(sifted_keys)
+            sifted_key_strs = shared_fns.convert_dod_to_dos(sifted_keys_by_uid)
+            for uidB in sifted_keys_by_uid:
+                partyB = parties[uidB]
+                print("{} <-> {} key: {}".format(partyA.name,
+                                                 partyB.name,
+                                                 sifted_key_strs[uidB]))
 
-                # secret_key_idxs = party_A.secret_keys_idxs[party_B_uid]
-                # secret_key_length = party_A.secret_keys_lengths[party_B_uid]
-                # secret_key_str = shared_fns.convert_list_to_string(party_A.secret_keys[party_B_uid])
-                # formatted = shared_fns.add_spaces_to_bitstring(secret_key_str,
-                #                                                secret_key_idxs,
-                #                                                secret_key_length)
+        # Display the check bits.
+        first_line = True
+        for uidA in parties:
+            partyA = parties[uidA]
+            check_bits = partyA.check_bits
+            check_bits_by_uid = shared_fns.reorder_by_uid(check_bits)
+            check_bits_strs = shared_fns.convert_dod_to_dos(check_bits_by_uid)
+            for uidB in check_bits_by_uid:
+                check_bits_exist = True
+                partyB = parties[uidB]
+                if first_line:
+                    print()
+                    first_line = False
+                print("{} <-> {} CBs: {}".format(partyA.name,
+                                                 partyB.name,
+                                                 check_bits_strs[uidB]))
 
-                print("{} <-> {} key: {}".format(party_A.name, party_B.name, party_A.secret_keys[party_B_uid]))#formatted))
-
-    def represent_bases_by_chars(self, bases):
-        basis_chars = []
-        for basis in bases:
-            if np.allclose(basis, consts.STANDARD_BASIS):
-                basis_chars.append('S')
-            elif np.allclose(basis, consts.HADAMARD_BASIS):
-                basis_chars.append('H')
-            else:
-                basis_chars.append('?')
-
-        return basis_chars
-
-    def view_secret_key(self, view_all=False):
-        parties = self.network_manager.get_parties()
-        secret_key = parties[0].secret_key
-        secret_key_str = shared_fns.convert_list_to_string(secret_key)
-        print(secret_key_str)
-
-        if view_all:
-            raise NotImplementedError("Not implemented for view_all=True")
+        # Display the secret keys.
+        first_line = True
+        for uidA in parties:
+            partyA = parties[uidA]
+            secret_keys = partyA.secret_keys
+            secret_keys_by_uid = shared_fns.reorder_by_uid(secret_keys)
+            secret_key_strs = shared_fns.convert_dod_to_dos(secret_keys_by_uid)
+            for uidB in secret_keys_by_uid:
+                partyB = parties[uidB]
+                if first_line:
+                    print()
+                    first_line = False
+                print("{} <-> {} key: {}".format(partyA.name,
+                                                 partyB.name,
+                                                 secret_key_strs[uidB]))
 
 
 class NetworkManager:
 
-    def __init__(self, k, cchl, edges=None):
-        network = nx.DiGraph()
-
-        if edges is None:
-            network = nx.complete_graph(k, nx.DiGraph())
-
-        else:
-            network.add_edges_from(edges)
+    def __init__(self, cchl, edges):
+        network = nx.DiGraph(edges)
 
         parties = {}
         for node_uid in network:
@@ -268,8 +630,6 @@ class NetworkManager:
             party_u.connect_to_qchl(v_uid, qchl)
             party_v.connect_to_qchl(u_uid, qchl)
 
-            # party_u.set_target(v_uid)
-
             qchls[edge] = qchl
 
         nx.set_node_attributes(network, parties, "party")
@@ -282,7 +642,6 @@ class NetworkManager:
         parties = self.get_parties()
         for uid in parties:
             parties[uid].reset()
-            parties[uid].update_network()
 
     def get_successors(self, party_uid):
         return list(self.network.successors(party_uid))
@@ -300,122 +659,90 @@ class NetworkManager:
         return self.get_parties()[uid]
 
 
-class ClassicalChannel:
+class ClassicalChannel(UIComponent):
 
     def __init__(self):
+        super().__init__()
         self.reset()
 
     def reset(self):
-        self.bases = {}
-        self.flip_instructions = {}
-        self.msgs_ready_to_compare_bases = {}
+        self.timestep = 0
+        self.messages = {}
+        super().reset()
 
-    def add_network_manager(self, network_manager):
-        self.network_manager = network_manager
+    ###########################################################################
+    # MESSAGE PROCESSING METHODS
+    ###########################################################################
 
-    def get_bases(self, basis_idx):
-        return self.bases[basis_idx]
+    # TODO make one message retrieval method
+    # Note that get_tx_bases and get_rx_bases are currently structured slightly
+    # differently from the other message retrieval methods. Is this necessary?
 
-    def get_flip_instructions(self, uid, bit_idx):
-        # print("Flip instructions: {}".format(self.flip_instructions))
-        sender_uid, flip_bool = (None, False)
-        # print("uid {} getting flip instruction".format(uid))
-        if uid in self.flip_instructions:
-            # print("uid {} is in self.flip_instructions".format(uid))
-            if bit_idx in self.flip_instructions[uid]:
-                # print("bit_idx {} in self.flip_instructions[{}]".format(bit_idx, uid))
-                sender_uid, flip_bool = self.flip_instructions[uid][bit_idx]
+    def get_tx_bases(self, timestep):
+        '''Retrieve all messages of type "broadcast_tx_bases" for the given timestep.'''
+        tx_bases = {}
+        for tx_uid in self.messages:
+            for msg in self.messages[tx_uid]:
+                if msg["type"] == "broadcast_tx_bases":
+                    if msg["timestep"] == timestep:
+                        tx_bases[tx_uid] = msg["data"]
+        return tx_bases
 
-        return (sender_uid, flip_bool)
+    def get_rx_bases(self, timestep):
+        '''Retrieve all messages of type "broadcast_rx_bases" for the given timestep.'''
+        rx_bases = {}
+        for rx_uid in self.messages:
+            for msg in self.messages[rx_uid]:
+                if msg["type"] == "broadcast_rx_bases":
+                    if msg["timestep"] == timestep:
+                        rx_bases[rx_uid] = msg["data"]
+        return rx_bases
+
+    def get_msg_check_bits(self, timestep, sender_uid):
+        '''Retrieve all messages of type "broadcast_check_bits" for the given timestep.'''
+        check_bits = {}
+        if sender_uid in self.messages:
+            for msg in self.messages[sender_uid]:
+                if msg["type"] == "broadcast_check_bits":
+                    if msg["timestep"] == timestep:
+                        check_bits = msg["data"]
+        return check_bits
+
+    def get_flip_bit_instructions(self, timestep, sender_uid):
+        '''Retrieve a message from sender_uid of type "broadcast_flip_bit_instructions" for the given timestep.'''
+        flip_bit_instrs = {}
+        if sender_uid in self.messages:
+            for msg in self.messages[sender_uid]:
+                if msg["type"] == "broadcast_flip_bit_instructions":
+                    if msg["timestep"] == timestep:
+                        flip_bit_instrs = msg["data"]
+        return flip_bit_instrs
+
+    def get_msg_key_length(self, timestep, sender_uid):
+        key_length = math.inf
+        if sender_uid in self.messages:
+            for msg in self.messages[sender_uid]:
+                if msg["type"] == "broadcast_key_length":
+                    if msg["timestep"] == timestep:
+                        key_length = msg["data"]
+        return key_length
+
+    ###########################################################################
+    # UI METHODS
+    ###########################################################################
+
+    def ui_tick(self):
+        '''Progress to the next timestep.'''
+        data = {"messages": copy.deepcopy(self.messages)}
+        super().ui_tick(data)
 
     ###########################################################################
     # CLASSICAL COMMUNICATION METHODS
     ###########################################################################
 
-    def msg_ready_to_compare_basis(self, party_uid, basis_idx):
-        print("msg_ready_to_compare_basis, party_uid {}, basis_idx {}".format(party_uid, basis_idx))
-        msgs = self.msgs_ready_to_compare_bases
-
-        if party_uid not in msgs:
-            msgs[party_uid] = []
-
-        # Limit the number of basis indices stored to (up to) 3 for each party.
-        if len(msgs[party_uid]) == 3:
-            msgs[party_uid].pop(0)
-
-        msgs[party_uid].append(basis_idx)
-        return copy.deepcopy(msgs)
-
-    def msg_compare_bases(self, basis_idx):
-        print("msg_compare_bases(), basis_idx {}".format(basis_idx))
-        parties = self.network_manager.get_parties()
-        bases = []
-        for uid in parties:
-            basis = parties[uid].transmit_basis(basis_idx)
-            bases.append(basis)
-
-        for uid in parties:
-            parties[uid].compare_bases(bases)
-
-    def msg_broadcast_bases(self, basis_idx, bases):
-        # shared_fns.append_to_dol(self.bases, basis_idx, bases)
-
-        if basis_idx not in self.bases:
-            self.bases[basis_idx] = []
-
-        self.bases[basis_idx].extend(bases)
-
-    def msg_broadcast_flip_instructions(self, tx_uid, rx_uid, bit_idx, flip_bool):
-        if rx_uid not in self.flip_instructions:
-            self.flip_instructions[rx_uid] = {}
-
-        self.flip_instructions[rx_uid][bit_idx] = (tx_uid, flip_bool)
-
-    def msg_flip_bit(self, recipient_uid, bit_position):
-        '''Forward the following message to the intended recipient:
-        Flip the bit of the sifted key that is in the given bit_position.'''
-
-        recipient = self.network_manager.get_party(recipient_uid)
-        recipient.add_flip_bit(bit_position)
-
-    def msg_flip_bits(self, recipient_uid, flip_bit_str):
-        '''Forward the following message to the intended recipient:
-        For any '1' in flip_bit_str, flip the bit in the corresponding
-        position of the sifted key.
-
-        E.g. repicient's old sifted key == "011", flip_bits_str == "101"
-             --> recipient's new sifted key == "110".'''
-
-        recipient = self.network_manager.get_party(recipient_uid)
-        recipient.flip_bits(flip_bit_str)
-
-    ###########################################################################
-    # OBSOLETE METHODS
-    ###########################################################################
-
-    def compare_bases(self, basis_idx):
-        # Check that all the parties have the same number of bases.
-        parties = self.get_parties()
-        bases_length = len(parties[0].bases)
-        bases_lengths_match = True
-        for uid in parties:
-            party = parties[uid]
-            if len(party.bases) != bases_length:
-                bases_lengths_match = False
-                break
-
-        # Check whether all the bases match.
-        if bases_lengths_match:
-            basis_value = parties[0].bases[-1]
-            basis_values_match = True
-            for uid in parties:
-                party = parties[uid]
-                if not party.bases or party.bases[-1] != basis_value:
-                    basis_values_match = False
-                    break
-
-            for uid in parties:
-                party = parties[uid]
-                print("{} updating sifted_key ({})".format(party.name, basis_values_match))
-                party.update_sifted_key(basis_values_match)
+    def add_message(self, sender_uid, message):
+        '''Add a message from sender_uid to the classical channel.'''
+        if sender_uid not in self.messages:
+            self.messages[sender_uid] = []
+        self.messages[sender_uid].append(message)
 
