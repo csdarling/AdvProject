@@ -6,67 +6,66 @@ import math
 class NQubitState:
 
     def __init__(self, state):
-        # State is vector of coefficients:
-        # e.g. state = [a,b,c,d]
-        self.state = state
+        # The state is stored as a vector of coefficients.
+        # E.g. state = [a,b,c,d] <--> a|00> + b|01> + c|10> + d|11>
+
+        # The state must be a numpy array of floats.
+        state = np.array(state, dtype=float)
+        # Check that the given state is not the zero vector.
+        if np.allclose(state, np.zeros(state.shape)):
+            raise ValueError(("The state of NQubitState can't be equal to the "
+                              "zero vector."))
+        # Check that the size of the given state is a positive power of 2.
+        if state.size == 0 or ((state.size & (state.size - 1)) != 0):
+            raise ValueError(("The size of the state of NQubitState must be a "
+                              "positive power of 2."))
+        # Normalise the state.
+        norm = math.sqrt(state.dot(state))
+        self.state = state / norm
 
     def measure(self, operator):
+        '''Measure the state using the given measurement operator.'''
+        # Check that the operator is square.
         shape = operator.shape
         if shape[0] != shape[1]:
             raise Exception("Attempted to measure state with a non-square operator.")
 
-        # print("State prior to measurement: {}\n".format(self.state))
-
         psi = self.state
         prob_distr = []
 
+        # Calculate the eigenvalues and eigenvectors of the given operator.
         eigh = np.linalg.eigh(operator)
         e_values = eigh[0].astype(int)
         e_vectors = eigh[1]
 
+        # The number of subspaces that the state can be projected onto is
+        # given by the number of distinct eigenvalues.
         distinct_e_values = np.unique(e_values)
-        prob_distr = [0] * distinct_e_values.size
-        projections = np.zeros((shape[0], distinct_e_values.size))
+        number_of_eigenspaces = distinct_e_values.size
+        prob_distr = [0] * number_of_eigenspaces
+        projections = np.zeros((shape[0], number_of_eigenspaces))
 
-        for i in range(distinct_e_values.size):
+        # For each subspace
+        for i in range(number_of_eigenspaces):
 
             for j in range(e_values.size):
                 if e_values[j] == distinct_e_values[i]:
-                    p_j = abs(e_vectors[:, j].dot(psi)) ** 2
-                    prob_distr[i] += p_j
+                    prob_j = abs(e_vectors[:, j].dot(psi)) ** 2
+                    prob_distr[i] += prob_j
                     projections[:, i] += e_vectors[:, j].dot(psi) * e_vectors[:, j]
 
-            # Normalise the projected vector
+            # Normalise the projected vector.
             norm = math.sqrt(projections[:, i].dot(projections[:, i]))
             if norm:
                 projections[:, i] /= norm
-            # print("Measure {} and collapse state to {} with probability {:.3f}".format(
-                # distinct_e_values[i], projections[:, i], prob_distr[i]))
 
-        idx = np.random.choice(distinct_e_values.size, p=prob_distr)
-        meas_result = distinct_e_values[idx]
-        new_state = projections[:, idx]
-
-        # print("\nState collapsed to {}".format(new_state))
-        # print("Measure bit value: {}\n\n".format(meas_result))
-
-        self.state = new_state
-        return meas_result
-
-        # print("e_values: {}".format(e_values))
-        # print("e_vectors:\n{}\n".format(e_vectors))
-
-        # for i in range(e_values.size):
-        #     p_i = abs(e_vectors[:, i].dot(psi)) ** 2
-        #     print("Measure {} and collapse state to {} with probability {:.3f}".format(int(e_values[i]), e_vectors[:, i], p_i))
-        #     prob_distr.append(p_i)
-
-        # idx = np.random.choice(shape[0], p=prob_distr)
-        # eigen_value = eigh[0][idx]
-        # eigen_vector = eigh[1][:, idx]
-
-        # self.state = eigen_vector
-        # return int(eigen_value)
+        # Choose an subspace according to the probability distribution.
+        idx = np.random.choice(number_of_eigenspaces, p=prob_distr)
+        # The new state is the eigenvector.
+        self.state = projections[:, idx]
+        # The output of the measurement is the eigenvalue.
+        measured_value = distinct_e_values[idx]
+        return measured_value
 
 
 class EntangledQubit:
