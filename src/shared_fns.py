@@ -1,6 +1,20 @@
 import numpy as np
 import consts
 
+def get_measurement_operator(eigenvalues, eigenvectors):
+    '''
+    Find the measurement operator with the given eigenvalues and eigenvectors.
+
+    Example inputs:
+        eigenvalues  = [0, 1, 2, 3]
+        eigenvectors = [[1,0,0,0], [0,1,0,0], [0,0,0,0], [0,0,0,0]]
+    '''
+    D = np.diag(eigenvalues)
+    V = np.array(eigenvectors).T
+    M = V @ D @ np.linalg.inv(V)  # M = V D V_inv
+
+    return M
+
 def append_to_dol(dict_of_lists, key, new_val):
     if key not in dict_of_lists:
         dict_of_lists[key] = []

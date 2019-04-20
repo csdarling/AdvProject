@@ -1,8 +1,9 @@
 import unittest
-import math
+from math import floor, ceil, cos, sin, pi, sqrt
 import numpy as np
-import meas_operators as mo
+
 from state import NQubitState
+from shared_fns import get_measurement_operator
 
 class TestNQubitState(unittest.TestCase):
 
@@ -23,8 +24,9 @@ class TestNQubitState(unittest.TestCase):
             self.outcome_counter[self.measured_value] = 0
         self.outcome_counter[self.measured_value] += 1
 
-    def repeatedly_measure(self, initial_state, operator, expected_results, num_iterations=2000, tolerance=0.05):
+    def repeatedly_measure(self, initial_state, operator, expected_results, num_iterations=1000, tolerance=0.1):
         '''Repeatedly execute the measurement procedure on the given state and operator.'''
+        self.outcome_counter.clear()
         for outcome in expected_results:
             self.outcome_counter[outcome] = 0
 
@@ -95,8 +97,8 @@ class TestNQubitState(unittest.TestCase):
         lower_bounds = {}
         upper_bounds = {}
         for outcome in expected_results:
-            lower_bound = math.ceil(expected_counts[outcome] - allowed_error)
-            upper_bound = math.floor(expected_counts[outcome] + allowed_error) + 1
+            lower_bound = ceil(expected_counts[outcome] - allowed_error)
+            upper_bound = floor(expected_counts[outcome] + allowed_error) + 1
             lower_bounds[outcome] = lower_bound
             upper_bounds[outcome] = upper_bound
 
@@ -105,7 +107,7 @@ class TestNQubitState(unittest.TestCase):
         failure_message = (
             "\n  Observed counts: {}"
             "\n  Expected counts: {}"
-            "\n  Tolerance is currently set to {} (±{})"
+            "\n  Tolerance is currently set at {} (±{})"
         ).format(self.outcome_counter, expected_counts, tolerance, allowed_error)
 
         for outcome in expected_results:
@@ -117,75 +119,227 @@ class TestNQubitState(unittest.TestCase):
                 msg=failure_message
             )
 
-    def test_1QubitState_InitialStateSTD_MeasurementOperatorSTD(self):
-        '''Create a 1-qubit state in the standard basis and measure it w.r.t.
-        the standard basis.'''
-        expected_results = {
-            0: {"state": NQubitState([1, 0]).state,
-                "probability": 1.0},
-            1: {"state": NQubitState([0, 1]).state,
-                "probability": 0.0}
-        }
-        self.repeatedly_measure([1, 0], mo.M_STD1, expected_results,
-                                num_iterations=100,
-                                tolerance=0.0)
+    def run_1QubitState_tests(self, initial_states, collapsed_states, probabilities, num_iterations, tolerance):
+        '''Run the measurements for the given 1-qubit states and probabilities.'''
+        outcomes = [0, 1]  # [i for i in range(len(initial_states))]
+        operator = get_measurement_operator(outcomes, collapsed_states)
+        expected_results = {}
+        for outcome in outcomes:
+            expected_results[outcome] = {
+                "state": NQubitState(collapsed_states[outcome]).state,
+                "probability": probabilities[outcome]
+            }
+        self.repeatedly_measure(initial_states[0], operator, expected_results,
+                                num_iterations, tolerance)
+        expected_results[0]["probability"] = probabilities[1]
+        expected_results[1]["probability"] = probabilities[0]
+        self.repeatedly_measure(initial_states[1], operator, expected_results,
+                                num_iterations, tolerance)
 
-        expected_results = {
-            0: {"state": NQubitState([1, 0]).state,
-                "probability": 0.0},
-            1: {"state": NQubitState([0, 1]).state,
-                "probability": 1.0}
-        }
-        self.repeatedly_measure([0, 1], mo.M_STD1, expected_results,
-                                num_iterations=100,
-                                tolerance=0.0)
+    def test_1QubitState_InitialStateSTD_MeasurementOperatorSTD(self):
+        '''Measure the standard basis vectors w.r.t. the standard basis.'''
+        num_iterations = 100
+        tolerance = 0.0
+
+        initial_states = [[1, 0], [0, 1]]
+        collapsed_states = initial_states
+        probabilities = [1.0, 0.0]
+
+        self.run_1QubitState_tests(initial_states, collapsed_states, probabilities,
+                                  num_iterations, tolerance)
 
     def test_1QubitState_InitialStateHAD_MeasurementOperatorHAD(self):
-        '''Create a 1-qubit state in the Hadamard basis and measure it w.r.t.
-        the Hadamard basis.'''
-        expected_results = {
-            0: {"state": NQubitState([1,  1]).state,
-                "probability": 1.0},
-            1: {"state": NQubitState([1, -1]).state,
-                "probability": 0.0}
-        }
-        self.repeatedly_measure([1,  1], mo.M_HAD1, expected_results,
-                                num_iterations=100,
-                                tolerance=0.0)
+        '''Measure the Hadamard basis vectors w.r.t. the Hadamard basis.'''
+        num_iterations = 100
+        tolerance = 0.0
 
-        expected_results = {
-            0: {"state": NQubitState([1,  1]).state,
-                "probability": 0.0},
-            1: {"state": NQubitState([1, -1]).state,
-                "probability": 1.0}
-        }
-        self.repeatedly_measure([1, -1], mo.M_HAD1, expected_results,
-                                num_iterations=100,
-                                tolerance=0.0)
+        initial_states = [[1, 1], [1, -1]]
+        collapsed_states = initial_states
+        probabilities = [1.0, 0.0]
+
+        self.run_1QubitState_tests(initial_states, collapsed_states, probabilities,
+                                  num_iterations, tolerance)
 
     def test_1QubitState_InitialStateSTD_MeasurementOperatorHAD(self):
-        '''Create a 1-qubit state in the standard basis and measure it w.r.t.
-        the Hadamard basis.'''
-        expected_results = {
-            0: {"state": NQubitState([1,  1]).state,
-                "probability": 0.5},
-            1: {"state": NQubitState([1, -1]).state,
-                "probability": 0.5}
-        }
-        self.repeatedly_measure([1, 0], mo.M_HAD1, expected_results)
-        self.repeatedly_measure([0, 1], mo.M_HAD1, expected_results)
+        '''Measure the standard basis vectors w.r.t. the Hadamard basis.'''
+        num_iterations = 1000
+        tolerance = 0.1
+
+        initial_states = [[1, 0], [0, 1]]
+        collapsed_states = [[1, 1], [1, -1]]
+        probabilities = [0.5, 0.5]
+
+        self.run_1QubitState_tests(initial_states, collapsed_states, probabilities,
+                                  num_iterations, tolerance)
 
     def test_1QubitState_InitialStateHAD_MeasurementOperatorSTD(self):
-        '''Create a 1-qubit state in the Hadamard basis and measure it w.r.t.
-        the standard basis.'''
+        '''Measure the Hadamard basis vectors w.r.t. the standard basis.'''
+        num_iterations = 1000
+        tolerance = 0.1
+
+        initial_states = [[1, 1], [1, -1]]
+        collapsed_states = [[1, 0], [0, 1]]
+        probabilities = [0.5, 0.5]
+
+        self.run_1QubitState_tests(initial_states, collapsed_states, probabilities,
+                                  num_iterations, tolerance)
+
+    def test_1QubitState_InitialState30_MeasurementOperatorSTD(self):
+        '''Measure angle pi/6 (30 degrees) w.r.t. the standard basis.'''
+        num_iterations = 1000
+        tolerance = 0.1
+
+        initial_states = [[cos(pi/6), sin(pi/6)], [- sin(pi/6), cos(pi/6)]]
+        collapsed_states = [[1, 0], [0, 1]]
+        probabilities = [0.75, 0.25]
+
+        self.run_1QubitState_tests(initial_states, collapsed_states, probabilities,
+                                  num_iterations, tolerance)
+
+    def test_1QubitState_InitialState30_MeasurementOperatorHAD(self):
+        '''Measure angle pi/6 (30 degrees) w.r.t. the Hadamard basis.'''
+        num_iterations = 1000
+        tolerance = 0.1
+
+        initial_states = [[cos(pi/6), sin(pi/6)], [- sin(pi/6), cos(pi/6)]]
+        collapsed_states = [[1, 1], [1, -1]]
+        probabilities = [( cos(pi/6) * sqrt(1/2) + sin(pi/6) * sqrt(1/2)) ** 2,
+                         (-sin(pi/6) * sqrt(1/2) + cos(pi/6) * sqrt(1/2)) ** 2]
+
+        self.run_1QubitState_tests(initial_states, collapsed_states, probabilities,
+                                  num_iterations, tolerance)
+
+    def test_1QubitState_InitialState60_MeasurementOperatorSTD(self):
+        '''Measure angle pi/3 (60 degrees) w.r.t. the standard basis.'''
+        num_iterations = 1000
+        tolerance = 0.1
+
+        initial_states = [[cos(pi/3), sin(pi/3)], [- sin(pi/3), cos(pi/3)]]
+        collapsed_states = [[1, 0], [0, 1]]
+        probabilities = [0.25, 0.75]
+
+        self.run_1QubitState_tests(initial_states, collapsed_states, probabilities,
+                                  num_iterations, tolerance)
+
+    def test_1QubitState_InitialState60_MeasurementOperatorHAD(self):
+        '''Measure angle pi/3 (60 degrees) w.r.t. the Hadamard basis.'''
+        num_iterations = 1000
+        tolerance = 0.1
+
+        initial_states = [[cos(pi/3), sin(pi/3)], [- sin(pi/3), cos(pi/3)]]
+        collapsed_states = [[1, 1], [1, -1]]
+        probabilities = [( cos(pi/3) * sqrt(1/2) + sin(pi/3) * sqrt(1/2)) ** 2,
+                         (-sin(pi/3) * sqrt(1/2) + cos(pi/3) * sqrt(1/2)) ** 2]
+
+        self.run_1QubitState_tests(initial_states, collapsed_states, probabilities,
+                                  num_iterations, tolerance)
+
+    def test_1QubitState_InitialState30_MeasurementOperator30(self):
+        '''Measure angle pi/6 (30 degrees) w.r.t. angle pi/6 (30 degrees).'''
+        num_iterations = 100
+        tolerance = 0.0
+
+        initial_states = [[cos(pi/6), sin(pi/6)], [- sin(pi/6), cos(pi/6)]]
+        collapsed_states = initial_states
+        probabilities = [1.0, 0.0]
+
+        self.run_1QubitState_tests(initial_states, collapsed_states, probabilities,
+                                  num_iterations, tolerance)
+
+    def test_1QubitState_InitialState60_MeasurementOperator60(self):
+        '''Measure angle pi/3 (60 degrees) w.r.t. angle pi/3 (60 degrees).'''
+        num_iterations = 100
+        tolerance = 0.0
+
+        initial_states = [[cos(pi/3), sin(pi/3)], [- sin(pi/3), cos(pi/3)]]
+        collapsed_states = initial_states
+        probabilities = [1.0, 0.0]
+
+        self.run_1QubitState_tests(initial_states, collapsed_states, probabilities,
+                                  num_iterations, tolerance)
+
+    def test_1QubitState_InitialState30_MeasurementOperator75(self):
+        '''Measure angle pi/6 (30 degrees) w.r.t. angle 5pi/12 (75 degrees).'''
+        num_iterations = 1000
+        tolerance = 0.1
+
+        theta = pi/6 + pi/4
+        initial_states = [[cos(pi/6), sin(pi/6)], [-sin(pi/6), cos(pi/6)]]
+        collapsed_states = [[cos(theta), sin(theta)], [-sin(theta), cos(theta)]]
+        probabilities = [0.5, 0.5]
+
+        self.run_1QubitState_tests(initial_states, collapsed_states, probabilities,
+                                  num_iterations, tolerance)
+
+    def test_1QubitState_InitialState60_MeasurementOperator105(self):
+        '''Measure angle pi/3 (60 degrees) w.r.t. angle 7pi/12 (105 degrees).'''
+        num_iterations = 1000
+        tolerance = 0.1
+
+        theta = pi/3 + pi/4
+        initial_states = [[cos(pi/3), sin(pi/3)], [-sin(pi/3), cos(pi/3)]]
+        collapsed_states = [[cos(theta), sin(theta)], [-sin(theta), cos(theta)]]
+        probabilities = [0.5, 0.5]
+
+        self.run_1QubitState_tests(initial_states, collapsed_states, probabilities,
+                                  num_iterations, tolerance)
+
+    def test_1QubitState_InitialState60_MeasurementOperator15(self):
+        '''Measure angle pi/3 (60 degrees) w.r.t. angle pi/12 (15 degrees).'''
+        num_iterations = 1000
+        tolerance = 0.1
+
+        theta = pi/3 - pi/4
+        initial_states = [[cos(pi/3), sin(pi/3)], [-sin(pi/3), cos(pi/3)]]
+        collapsed_states = [[cos(theta), sin(theta)], [-sin(theta), cos(theta)]]
+        probabilities = [0.5, 0.5]
+
+        self.run_1QubitState_tests(initial_states, collapsed_states, probabilities,
+                                  num_iterations, tolerance)
+
+    def run_2QubitState_tests(self, initial_states, collapsed_states, probabilities, num_iterations, tolerance):
+        pass
+
+    def test_2QubitState_InitialStateSTD_MeasurementOperatorSTD(self):
+        '''Create a 2-qubit state in the standard basis and measure it w.r.t. the standard basis.'''
+        num_iterations = 100
+        tolerance = 0.0
+
+        initial_states = [[1, 0, 0, 0],
+                          [0, 1, 0, 0],
+                          [0, 0, 1, 0],
+                          [0, 0, 0, 1]]
+
+        collapsed_states = initial_states
+        operator = get_measurement_operator([0, 1, 2, 3], collapsed_states)
+
         expected_results = {
-            0: {"state": NQubitState([1, 0]).state,
-                "probability": 0.5},
-            1: {"state": NQubitState([0, 1]).state,
-                "probability": 0.5}
+            0: {"state": NQubitState(collapsed_states[0]).state,
+                "probability": 1.0},
+            1: {"state": NQubitState(collapsed_states[1]).state,
+                "probability": 0.0},
+            2: {"state": NQubitState(collapsed_states[2]).state,
+                "probability": 0.0},
+            3: {"state": NQubitState(collapsed_states[3]).state,
+                "probability": 0.0}
         }
-        self.repeatedly_measure([1,  1], mo.M_STD1, expected_results)
-        self.repeatedly_measure([1, -1], mo.M_STD1, expected_results)
+        self.repeatedly_measure(initial_states[0], operator, expected_results,
+                                num_iterations, tolerance)
+
+        expected_results[0]["probability"] = 0.0
+        expected_results[1]["probability"] = 1.0
+        self.repeatedly_measure(initial_states[1], operator, expected_results,
+                                num_iterations, tolerance)
+
+        expected_results[1]["probability"] = 0.0
+        expected_results[2]["probability"] = 1.0
+        self.repeatedly_measure(initial_states[2], operator, expected_results,
+                                num_iterations, tolerance)
+
+        expected_results[2]["probability"] = 0.0
+        expected_results[3]["probability"] = 1.0
+        self.repeatedly_measure(initial_states[3], operator, expected_results,
+                                num_iterations, tolerance)
 
 
 if __name__ == '__main__':

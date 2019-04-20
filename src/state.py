@@ -35,7 +35,8 @@ class NQubitState:
 
         # Calculate the eigenvalues and eigenvectors of the given operator.
         eigh = np.linalg.eigh(operator)
-        e_values = eigh[0].astype(int)
+        e_values = [int(round(eigh[0][i])) for i in range(eigh[0].size)]
+        e_values = np.array(e_values)
         e_vectors = eigh[1]
 
         # The number of subspaces that the state can be projected onto is
@@ -45,9 +46,8 @@ class NQubitState:
         prob_distr = [0] * number_of_eigenspaces
         projections = np.zeros((shape[0], number_of_eigenspaces))
 
-        # For each subspace
+        # For each subspace...
         for i in range(number_of_eigenspaces):
-
             for j in range(e_values.size):
                 if e_values[j] == distinct_e_values[i]:
                     prob_j = abs(e_vectors[:, j].dot(psi)) ** 2
