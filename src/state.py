@@ -7,7 +7,7 @@ import shared_fns
 class NQubitState:
 
     def __init__(self, state):
-        # The state is stored as a vector of coefficients.
+        # The state is stored as a vector of coefficients (in the standard basis).
         # E.g. state = [a,b,c,d] <--> a|00> + b|01> + c|10> + d|11>
 
         # The state must be a numpy array of floats.
@@ -16,7 +16,7 @@ class NQubitState:
         if np.allclose(state, np.zeros(state.shape)):
             raise ValueError(("The state of NQubitState can't be equal to the "
                               "zero vector."))
-        # Check that the size of the given state is a positive power of 2.
+        # Check that the size of the given state is a positive power of 2.
         if state.size == 0 or ((state.size & (state.size - 1)) != 0):
             raise ValueError(("The size of the state of NQubitState must be a "
                               "positive power of 2."))
@@ -41,23 +41,32 @@ class NQubitState:
 
         # The number of subspaces that the state can be projected onto is
         # given by the number of distinct eigenvalues.
-        distinct_evalues, idxs, multiplicities = np.unique(eigenvalues,
-                                                           return_index=True,
-                                                           return_counts=True)
+        distinct_evalues = np.unique(eigenvalues)
         number_of_subspaces = distinct_evalues.size
         prob_distr = [0] * number_of_subspaces
         projections = np.zeros((shape[0], number_of_subspaces))
 
-        # Calculate the probability and projected vector for each subspace.
-        for i, evalue in enumerate(distinct_evalues):
-            multiplicity = multiplicities[i]
-            evector = eigenvectors[idxs[i]]
-            # Calculate the probability that psi collapses onto this subspace.
-            probability = abs(evector.dot(psi)) ** 2
-            prob_distr[i] = probability * multiplicity
-            # Calculate the projection of psi onto this subspace.
-            projection = evector.dot(psi) * evector
-            projections[:, i] = shared_fns.normalise(projection * multiplicity)
+        # For each subspace, calculate the probability that the state collapses
+        # onto the subspace and the projection of the state onto the subspace.
+        for i, distinct_evalue in enumerate(distinct_evalues):
+            # The total probability and projection for the subspace is obtained
+            # by summing over all the (not necessarily distinct) eigenvectors.
+            for j, eigenvalue in enumerate(eigenvalues):
+                if eigenvalue == distinct_evalue:
+                    evector = eigenvectors[:, j]
+                    # Calculate the probability that the state will collapse
+                    # to this eigenvector.
+                    probability = abs(evector.dot(psi)) ** 2
+                    # Add it to the total probability for the subspace.
+                    prob_distr[i] += probability
+                    # Calculate the component of psi in the direction of this
+                    # eigenvector.
+                    projection = evector.dot(psi) * evector
+                    # Add it to the total for the subspace.
+                    projections[:, i] += projection
+
+            # Normalise the projected vector.
+            projections[:, i] = shared_fns.normalise(projections[:, i])
 
         # Choose an subspace according to the probability distribution.
         subspace = np.random.choice(number_of_subspaces, p=prob_distr)
@@ -70,30 +79,35 @@ class NQubitState:
 
 class EntangledQubit:
 
-    def __init__(self, state, position):
-        self.state = state
+    def __init__(self, nqubitstate, position):
+        self.nqubitstate = nqubitstate
         self.position = position
 
     def measure(self, operator):
         # Convert operator to 2-qubit version
-        # TODO: Fix this hack! It needs to work for any operator.
-        new_operator = None
+        num_qubits = int(math.log(self.nqubitstate.state.size, 2))
+        print("num_qubits: {}".format(num_qubits))
 
-        if np.allclose(operator, mo.M_S1):
-            if self.position == 0:
-                # print("STANDARD POSITION 0")
-                new_operator = mo.M_S2_0
-            elif self.position == 1:
-                # print("STANDARD POSITION 1")
-                new_operator = mo.M_S2_1
+        new_evalues = (
+            ([0] * (2 ** self.position) +
+             [1] * (2 ** self.position))
+            * (2 ** (num_qubits - self.position - 1))
+        )
 
-        elif np.allclose(operator, mo.M_H1):
-            if self.position == 0:
-                # print("HADAMARD POSITION 0")
-                new_operator = mo.M_H2_0
-            elif self.position == 1:
-                # print("HADAMARD POSITION 1")
-                new_operator = mo.M_H2_1
+        print("new_evalues: {}".format(new_evalues))
 
-        return self.state.measure(new_operator)
+        operator_evectors = np.linalg.eigh(operator)[1]
+
+        new_evectors = np.kron(
+            np.eye(2 ** (num_qubits - self.position - 1)),
+            np.kron(operator_evectors, np.eye(2 ** self.position))
+        )
+
+        print("new_evectors:\n{}".format(new_evectors))
+
+        new_operator = shared_fns.get_measurement_operator(new_evalues, new_evectors)
+
+        print("new_operator:\n{}".format(new_operator))
+
+        return self.nqubitstate.measure(new_operator)
 
