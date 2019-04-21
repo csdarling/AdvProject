@@ -6,32 +6,51 @@ import shared_fns
 
 class NQubitState:
 
-    def __init__(self, state):
-        # The state is stored as a vector of coefficients (in the standard basis).
-        # E.g. state = [a,b,c,d] <--> a|00> + b|01> + c|10> + d|11>
+    def __init__(self, coefficients):
+        # The state is represented by a vector of coefficients in the
+        # standard basis; e.g. coeffs [a, b] <--> state a|0> + b|1> and
+        # coeffs [a, b, c, d] <--> state a|00> + b|01> + c|10> + d|11>.
 
-        # The state must be a numpy array of floats.
-        state = np.array(state, dtype=float)
-        # Check that the given state is not the zero vector.
-        if np.allclose(state, np.zeros(state.shape)):
-            raise ValueError(("The state of NQubitState can't be equal to the "
-                              "zero vector."))
-        # Check that the size of the given state is a positive power of 2.
-        if state.size == 0 or ((state.size & (state.size - 1)) != 0):
-            raise ValueError(("The size of the state of NQubitState must be a "
-                              "positive power of 2."))
-        # Normalise the state.
-        self.state = shared_fns.normalise(state)
+        # The vector of coefficients must be stored as a numpy array of
+        # floats.
+        coefficients = np.array(coefficients, dtype=float)
+
+        # Check that the given coefficients are not all zero.
+        if np.allclose(coefficients, np.zeros(coefficients.shape)):
+            raise ValueError(("At least one of the coefficients of an "
+                              "NQubitState must be non-zero."))
+
+        # Check that the length of the vector of coefficients is a
+        # positive power of 2.
+        if (coefficients.size == 0 or (coefficients.size &
+                                      (coefficients.size - 1)) != 0):
+            raise ValueError(("The length of the vector of coefficients"
+                              " associated with an NQubitState must be "
+                              "a positive power of 2."))
+
+        # The state must be normalised.
+        coefficients = shared_fns.normalise(coefficients)
+        self.coefficients = coefficients
+
+        # Create the qubits that constitute the state.
+        self.num_qubits = int(math.log(coefficients.size, 2))
+        qubits = []
+        for i in range(self.num_qubits):
+            qubit = Qubit(self, i)
+            qubits.append(qubit)
+
+        self.qubits = qubits
 
     def measure(self, operator):
-        '''Measure the state using the given measurement operator.'''
+        '''Measure the state using the given operator.'''
         # Check that the operator is square.
         shape = operator.shape
         if shape[0] != shape[1]:
-            raise Exception("Attempted to measure state with a non-square operator.")
+            raise ValueError(("Attempted to measure NQubitState with a "
+                              "non-square operator."))
 
-        # Rename the state variable (just for convenience).
-        psi = self.state
+        # Rename the coefficients variable (just for convenience).
+        psi = self.coefficients
 
         # Calculate the eigenvalues and eigenvectors of the given operator.
         eigh = np.linalg.eigh(operator)
@@ -73,33 +92,64 @@ class NQubitState:
         # The measured value is the eigenvalue associated with this subspace.
         measured_value = distinct_evalues[subspace]
         # The new state is the projection of psi onto this subspace.
-        self.state = projections[:, subspace]
+        self.coefficients = projections[:, subspace]
         return measured_value
 
 
-class EntangledQubit:
+class Qubit:
 
-    def __init__(self, nqubitstate, position):
-        self.nqubitstate = nqubitstate
+    def __init__(self, state, position):
+        # Check that the given state is an instance of NQubitState.
+        if not isinstance(state, NQubitState):
+            raise TypeError(
+                ("Attempted to initialise a Qubit with an invalid state: "
+                 "expected an instance of NQubitState; received an instance "
+                 "of {}.").format(type(state))
+            )
+
+        self.state = state
+
+        # Check that the position is an integer.
+        if type(position) != int:
+            raise TypeError(("Attempted to initialise a Qubit with "
+                             "a position of type {}. The position field must "
+                             "be an integer.").format(type(position)))
+
+        # Check that the position is within the valid range of values.
+        num_qubits = self.state.num_qubits
+        if position < 0 or position > num_qubits - 1:
+            raise ValueError(("The given position ({}) is outside the valid "
+                              "range [0, {}].").format(position,
+                                                       num_qubits - 1))
+
         self.position = position
 
     def measure(self, operator):
-        # Convert operator to 2-qubit version
-        num_qubits = int(math.log(self.nqubitstate.state.size, 2))
+        '''Measure a single qubit of a multi-qubit state.'''
+        n = self.state.num_qubits
+        pos = self.position
 
-        new_evalues = (
-            ([0] * (2 ** self.position) +
-             [1] * (2 ** self.position))
-            * (2 ** (num_qubits - self.position - 1))
-        )
+        # Measurement of a single qubit of the state can only result in a bit,
+        # so the eigenvalues are 0 and 1, each with multiplicity 2^(n-1).
+        # The following is a convenient ordering of the 2^(n-1) 0's and 1's.
+        state_evalues = (([0] * (2 ** pos) + [1] * (2 ** pos))
+                         * (2 ** ((n - 1) - pos)))
 
-        operator_evectors = np.linalg.eigh(operator)[1]
+        # Calculate the eigenvectors for the measurement of the 1-qubit state
+        # consisting of just this qubit.
+        qubit_evectors = np.linalg.eigh(operator)[1]
 
-        new_evectors = np.kron(
-            np.eye(2 ** (num_qubits - self.position - 1)),
-            np.kron(operator_evectors, np.eye(2 ** self.position))
-        )
+        # Calculate the eigenvectors for the measurement of the n-qubit state
+        # using the qubit eigenvectors and the Kronecker product.
+        # (The appearance of the identity matrix stems from the use of the
+        # standard basis when representing the state by its coefficients.)
+        state_evectors = np.kron(np.eye(2 ** ((n - 1) - pos)),
+                                 np.kron(qubit_evectors, np.eye(2 ** pos)))
 
-        new_operator = shared_fns.get_measurement_operator(new_evalues, new_evectors)
-        return self.nqubitstate.measure(new_operator)
+        # Use these eigenvalues and eigenvectors to generate a measurement
+        # operator which acts on the whole state.
+        state_operator = shared_fns.get_measurement_operator(state_evalues,
+                                                             state_evectors)
+
+        return self.state.measure(state_operator)
 

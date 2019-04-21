@@ -18,7 +18,7 @@ class TestNQubitState(unittest.TestCase):
         psi = NQubitState(initial_state)
         # Measure the qubit w.r.t. a basis that is pi/4 out.
         self.measured_value = psi.measure(operator)
-        self.collapsed_state = psi.state
+        self.collapsed_state = psi.coefficients
         # Record the outcome of the measurement.
         if self.measured_value not in self.outcome_counter:
             self.outcome_counter[self.measured_value] = 0
@@ -126,7 +126,7 @@ class TestNQubitState(unittest.TestCase):
         expected_results = {}
         for outcome in outcomes:
             expected_results[outcome] = {
-                "state": NQubitState(collapsed_states[outcome]).state,
+                "state": NQubitState(collapsed_states[outcome]).coefficients,
                 "probability": probabilities[outcome]
             }
         self.repeatedly_measure(initial_states[0], operator, expected_results,
@@ -314,13 +314,13 @@ class TestNQubitState(unittest.TestCase):
         operator = get_measurement_operator([0, 1, 2, 3], collapsed_states)
 
         expected_results = {
-            0: {"state": NQubitState(collapsed_states[0]).state,
+            0: {"state": NQubitState(collapsed_states[0]).coefficients,
                 "probability": 1.0},
-            1: {"state": NQubitState(collapsed_states[1]).state,
+            1: {"state": NQubitState(collapsed_states[1]).coefficients,
                 "probability": 0.0},
-            2: {"state": NQubitState(collapsed_states[2]).state,
+            2: {"state": NQubitState(collapsed_states[2]).coefficients,
                 "probability": 0.0},
-            3: {"state": NQubitState(collapsed_states[3]).state,
+            3: {"state": NQubitState(collapsed_states[3]).coefficients,
                 "probability": 0.0}
         }
         self.repeatedly_measure(initial_states[0], operator, expected_results,
