@@ -86,15 +86,12 @@ class EntangledQubit:
     def measure(self, operator):
         # Convert operator to 2-qubit version
         num_qubits = int(math.log(self.nqubitstate.state.size, 2))
-        print("num_qubits: {}".format(num_qubits))
 
         new_evalues = (
             ([0] * (2 ** self.position) +
              [1] * (2 ** self.position))
             * (2 ** (num_qubits - self.position - 1))
         )
-
-        print("new_evalues: {}".format(new_evalues))
 
         operator_evectors = np.linalg.eigh(operator)[1]
 
@@ -103,11 +100,6 @@ class EntangledQubit:
             np.kron(operator_evectors, np.eye(2 ** self.position))
         )
 
-        print("new_evectors:\n{}".format(new_evectors))
-
         new_operator = shared_fns.get_measurement_operator(new_evalues, new_evectors)
-
-        print("new_operator:\n{}".format(new_operator))
-
         return self.nqubitstate.measure(new_operator)
 
