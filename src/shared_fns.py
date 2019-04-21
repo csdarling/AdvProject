@@ -1,4 +1,5 @@
 import numpy as np
+import math
 import consts
 
 def get_measurement_operator(eigenvalues, eigenvectors):
@@ -14,6 +15,12 @@ def get_measurement_operator(eigenvalues, eigenvectors):
     M = V @ D @ np.linalg.inv(V)  # M = V D V_inv
 
     return M
+
+def normalise(vector):
+    norm = math.sqrt(vector.dot(vector))
+    if norm:
+        vector /= norm
+    return vector
 
 def append_to_dol(dict_of_lists, key, new_val):
     if key not in dict_of_lists:

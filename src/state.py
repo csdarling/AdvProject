@@ -21,8 +21,7 @@ class NQubitState:
             raise ValueError(("The size of the state of NQubitState must be a "
                               "positive power of 2."))
         # Normalise the state.
-        norm = math.sqrt(state.dot(state))
-        self.state = state / norm
+        self.state = shared_fns.normalise(state)
 
     def measure(self, operator):
         '''Measure the state using the given measurement operator.'''
@@ -31,8 +30,8 @@ class NQubitState:
         if shape[0] != shape[1]:
             raise Exception("Attempted to measure state with a non-square operator.")
 
+        # Rename the state variable (just for convenience).
         psi = self.state
-        prob_distr = []
 
         # Calculate the eigenvalues and eigenvectors of the given operator.
         eigh = np.linalg.eigh(operator)
@@ -49,42 +48,23 @@ class NQubitState:
         prob_distr = [0] * number_of_subspaces
         projections = np.zeros((shape[0], number_of_subspaces))
 
-        # For each distinct eigenvalue (i.e. each subspace)...
-        for i, distinct_eigenvalue in enumerate(distinct_evalues):
-            # And for each (not necessarily distinct) eigenvalue...
-            for j, eigenvalue in enumerate(eigenvalues):
-                if eigenvalue == distinct_eigenvalue:
-                    # Calculate the probability for this eigenvalue.
-                    prob_j = abs(eigenvectors[:, j].dot(psi)) ** 2
-                    # Add it to the total probability for the i-th subspace.
-                    prob_distr[i] += prob_j
-                    # Calculate the component of psi in the direction of the
-                    # eigenvector corresponding to the j-th eigenvalue.
-                    projection_j = eigenvectors[:, j].dot(psi) * eigenvectors[:, j]
-                    # Add it to the total projection for the i-th subspace.
-                    projections[:, i] += projection_j
-
-            # Normalise the projected vector.
-            norm = math.sqrt(projections[:, i].dot(projections[:, i]))
-            if norm:
-                projections[:, i] /= norm
-
-        # for i, evalue in enumerate(distinct_evalues):
-        #     multiplicity = multiplicities[i]
-        #     evector = eigenvectors[idxs[i]]
-        #     # Calculate the probability that psi collapses to this subspace.
-        #     probability = abs(evector.dot(psi)) ** 2
-        #     prob_distr[i] = probability * multiplicity
-        #     # Calculate the projection of psi onto this subspace.
-        #     projection = evector.dot(psi) * evector
-        #     projections[:, i] = shared_fns.normalise(projection * multiplicity)
+        # Calculate the probability and projected vector for each subspace.
+        for i, evalue in enumerate(distinct_evalues):
+            multiplicity = multiplicities[i]
+            evector = eigenvectors[idxs[i]]
+            # Calculate the probability that psi collapses onto this subspace.
+            probability = abs(evector.dot(psi)) ** 2
+            prob_distr[i] = probability * multiplicity
+            # Calculate the projection of psi onto this subspace.
+            projection = evector.dot(psi) * evector
+            projections[:, i] = shared_fns.normalise(projection * multiplicity)
 
         # Choose an subspace according to the probability distribution.
-        idx = np.random.choice(number_of_subspaces, p=prob_distr)
-        # The new state is the eigenvector.
-        self.state = projections[:, idx]
-        # The output of the measurement is the eigenvalue.
-        measured_value = distinct_evalues[idx]
+        subspace = np.random.choice(number_of_subspaces, p=prob_distr)
+        # The measured value is the eigenvalue associated with this subspace.
+        measured_value = distinct_evalues[subspace]
+        # The new state is the projection of psi onto this subspace.
+        self.state = projections[:, subspace]
         return measured_value
 
 
