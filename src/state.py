@@ -40,6 +40,33 @@ class NQubitState:
 
         self.qubits = qubits
 
+    def __repr__(self):
+        coeffs_string = ""
+
+        qubit_0 = NQubitState([1, 0])
+        qubit_1 = NQubitState([0, 1])
+        qubit_plus = NQubitState([1, 1])
+        qubit_minus = NQubitState([1, -1])
+
+        if shared_fns.equal_coefficients(self, qubit_0):
+            coeffs_string = "|0>"
+        elif shared_fns.equal_coefficients(self, qubit_1):
+            coeffs_string = "|1>"
+        elif shared_fns.equal_coefficients(self, qubit_plus):
+            coeffs_string = "|+>"
+        elif shared_fns.equal_coefficients(self, qubit_minus):
+            coeffs_string = "|->"
+        else:
+            num_coeffs = self.coefficients.size
+            count = 0
+            for i, coeff in enumerate(self.coefficients):
+                coeffs_string += "%.2f" % coeff + "|{}>".format(i)
+                if count < num_coeffs - 1:
+                    coeffs_string += " + "
+                count += 1
+
+        return coeffs_string
+
     def measure(self, operator):
         '''Measure the state using the given operator.'''
         # Check that the operator is square.

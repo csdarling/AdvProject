@@ -114,6 +114,15 @@ class KPartyBB84:
         self.network_manager.next_timestep()
         self.timestep += 1
 
+    def get_stored_data_for_timestep(self, timestep):
+        '''Retrieve all of the stored data for a given timestep.'''
+        stored_data = {
+            "cchl": self.cchl.get_stored_data_for_timestep(timestep),
+            "parties": self.network_manager.get_party_stored_data_for_timestep(timestep),
+            "qchls": self.network_manager.get_qchl_stored_data_for_timestep(timestep)
+        }
+        return stored_data
+
     def chained_protocol(self, animation=True, check_bit_prob=0.2):
         '''Run the chained BB84 protocol.'''
         # TODO Check that the given network is actually a chain, i.e. that
@@ -652,31 +661,29 @@ class NetworkManager:
         nx.set_edge_attributes(network, qchls, "qchl")
 
         self.network = network
+        self.parties = nx.get_node_attributes(self.network, "party")
+        self.qchls = nx.get_edge_attributes(self.network, "qchl")
         self.reset()
 
     def reset(self):
         '''Reset the network to its configuration at timestep 0.'''
         # Reset all of the parties in the network.
-        parties = self.get_parties()
-        for uid in parties:
-            parties[uid].reset()
+        for uid in self.parties:
+            self.parties[uid].reset()
         # Reset all of the quantum channels in the network.
-        qchls = self.get_qchls()
-        for uid in qchls:
-            qchls[uid].reset()
+        for uid in self.qchls:
+            self.qchls[uid].reset()
         # Reset the network manager's timestep counter.
         self.timestep = 0
 
     def next_timestep(self):
         '''Store the data from this timestep and set up for the next timestep.'''
         # Increment the timestep for all the parties in the network.
-        parties = self.get_parties()
-        for uid in parties:
-            parties[uid].next_timestep()
+        for uid in self.parties:
+            self.parties[uid].next_timestep()
         # Increment the timestep for all the qchls in the network.
-        qchls = self.get_qchls()
-        for uid in qchls:
-            qchls[uid].next_timestep()
+        for uid in self.qchls:
+            self.qchls[uid].next_timestep()
         # Increment the network manager's timestep counter.
         self.timestep += 1
 
@@ -687,14 +694,37 @@ class NetworkManager:
         return list(self.network.predecessors(party_uid))
 
     def get_legitimate_party_uids(self):
-        return list(self.get_parties().keys())
+        return list(self.parties.keys())
 
     def get_parties(self):
-        return nx.get_node_attributes(self.network, "party")
+        return self.parties
 
-    def get_party(self, uid):
-        return self.get_parties()[uid]
+    def get_party(self, party_uid):
+        return self.parties[party_uid]
 
     def get_qchls(self):
-        return nx.get_edge_attributes(self.network, "qchl")
+        return self.qchls
+
+    def get_qchl(self, qchl_uid):
+        return self.qchls[qchl_uid]
+
+    ###########################################################################
+    # UI STORED DATA RETRIEVAL METHODS
+    ###########################################################################
+
+    def get_party_stored_data_for_timestep(self, timestep):
+        '''Retrieve the stored data from all parties for the given timestep.'''
+        stored_data = {}
+        for uid in self.parties:
+            party = self.get_party(uid)
+            stored_data[uid] = party.get_stored_data_for_timestep(timestep)
+        return stored_data
+
+    def get_qchl_stored_data_for_timestep(self, timestep):
+        '''Retrieve the stored data from all qchls for the given timestep.'''
+        stored_data = {}
+        for uid in self.qchls:
+            qchl = self.get_qchl(uid)
+            stored_data[uid] = qchl.get_stored_data_for_timestep(timestep)
+        return stored_data
 

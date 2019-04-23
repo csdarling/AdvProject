@@ -2,6 +2,10 @@ import numpy as np
 import math
 import consts
 
+def equal_coefficients(state1, state2):
+    return (np.allclose(state1.coefficients, state2.coefficients) or
+            np.allclose(state1.coefficients, -state2.coefficients))
+
 def get_measurement_operator(eigenvalues, eigenvectors):
     '''
     Find the measurement operator with the given eigenvalues and eigenvectors.

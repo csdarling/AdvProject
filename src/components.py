@@ -10,7 +10,26 @@ import shared_fns
 import state
 
 
-class ClassicalChannel:
+class UIComponent:
+
+    def next_timestep(self):
+        '''Store the data from this timestep and set up for the next timestep.'''
+        # Store the data from this timestep.
+        self.store_timestep_data()
+        # Reset all fields that should not persist between timesteps.
+        self.reset_tstep_fields()
+        # Increment the timestep counter.
+        self.timestep += 1
+
+    def get_stored_data_for_timestep(self, timestep):
+        '''Retrieve the stored data for the given timestep.'''
+        stored_data = {}
+        if timestep in self.stored_data:
+            stored_data = copy.deepcopy(self.stored_data[timestep])
+        return stored_data
+
+
+class ClassicalChannel(UIComponent):
 
     def __init__(self):
         self.reset()
@@ -20,15 +39,6 @@ class ClassicalChannel:
         self.timestep = 0
         self.tstep_messages = {}
         self.stored_data = {}
-
-    def next_timestep(self):
-        '''Store the data from this timestep and set up for the next timestep.'''
-        # Store the messages that were transmitted in this timestep.
-        self.store_timestep_data()
-        # Clear the log of messages.
-        self.reset_tstep_fields()
-        # Increment the timestep counter.
-        self.timestep += 1
 
     def store_timestep_data(self):
         '''Store the data from this timestep.'''
@@ -108,7 +118,7 @@ class ClassicalChannel:
         self.tstep_messages[sender_uid].append(message)
 
 
-class Party:
+class Party(UIComponent):
 
     def __init__(self, uid, name, network_manager, cchl, is_eve=False):
         self.uid = uid
@@ -152,15 +162,6 @@ class Party:
         self.tstep_tx_uid = None
         # Store the entire configuration of the party at each timestep.
         self.stored_data = {}
-
-    def next_timestep(self):
-        '''Store the data from this timestep and set up for the next timestep.'''
-        # Store the state that was transmitted in this timestep.
-        self.store_timestep_data()
-        # Reset the current state field.
-        self.reset_tstep_fields()
-        # Increment the timestep counter.
-        self.timestep += 1
 
     def store_timestep_data(self):
         '''Store the data from this timestep.'''
@@ -578,7 +579,7 @@ class Socket:
         self.party.receive_qubit(qubit)
 
 
-class QuantumChannel:
+class QuantumChannel(UIComponent):
 
     def __init__(self):
         self.sockets = {}
@@ -613,9 +614,14 @@ class QuantumChannel:
     def add_socket(self, uid, socket):
         self.sockets[uid] = socket
 
-    def send(self, state, sender_uid, target_uid):
-        self.tstep_state = state
-        self.sockets[target_uid].receive(state)
+    def send(self, qubit_state, sender_uid, target_uid):
+        '''Transmit a qubit state from sender to target via the quantum channel.'''
+        # Save a copy of the qubit state as it is during transmission through
+        # the quantum channel. (This is just so I can display it in the UI -
+        # would not be possible in the real world!)
+        self.tstep_state = state.NQubitState(qubit_state.coefficients)
+        # Pass the qubit to the intended recipient.
+        self.sockets[target_uid].receive(qubit_state)
 
 
 class EPRPairSource:
