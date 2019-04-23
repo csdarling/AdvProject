@@ -54,18 +54,19 @@ class UIComponent:
 class KPartyBB84:
 
     def __init__(self, k=None, edges=None, protocol=2, animation=True, check_bit_prob=0.2):
-        self.cchl = ClassicalChannel()
+        self.cchl = components.ClassicalChannel()
         self.set_protocol(protocol, k, edges, animation, check_bit_prob)
-        self.timestep = 0
 
     def reset(self):
-        self.network_manager.reset()
-        self.cchl.reset()
+        '''Reset the protocol to its configuration at timestep 0.'''
         self.timestep = 0
-        self.running_protocol = True
+        self.cchl.reset()
+        self.network_manager.reset()
+        self.protocol_secure = True
+        self.next_timestep()
 
     def set_protocol(self, protocol, k=None, edges=None, animation=True, check_bit_prob=0.2):
-        '''Choose which protocol to run.'''
+        '''Set the protocol to run when run_one_step or run_n_steps is called.'''
         if k is None and edges is None:
             # TODO Raise a more precise type of exception.
             raise Exception("Either k or edges must be specified.")
@@ -96,13 +97,22 @@ class KPartyBB84:
                 edges = [(0, i + 1) for i in range(k - 1)]
 
         else:
-            # TODO Add an error message.
-            raise NotImplementedError()
+            raise ValueError(("Protocol {} does not exist. Valid protocols:\n"
+                              "  0: Chained BB84\n"
+                              "  1: Star Graph BB84 (Protocol 1)\n"
+                              "  2: Star Graph BB84 (Protocol 2)"
+                              ).format(protocol))
 
         self.network_manager = NetworkManager(self.cchl, edges)
         self.protocol_params = {"animation": animation,
                                 "check_bit_prob": check_bit_prob}
-        self.running_protocol = True
+        self.reset()
+
+    def next_timestep(self):
+        '''Store the data from this timestep and set up for the next timestep.'''
+        self.cchl.next_timestep()
+        self.network_manager.next_timestep()
+        self.timestep += 1
 
     def chained_protocol(self, animation=True, check_bit_prob=0.2):
         '''Run the chained BB84 protocol.'''
@@ -212,9 +222,9 @@ class KPartyBB84:
                             # from the cchl and tests for eavesdropping.
                             parties[predecessor_uid].receive_check_bits(uid)
 
-                        # If the party has detected eavesdropping, then abort
-                        # the run of the protocol.
-                        if parties[uid].detected_eavesdropping:
+                        # If the party detects eavesdropping on any channel,
+                        # then abort the run of the protocol.
+                        if parties[uid].compromised_chls:
                             print("\nEavesdropping detected!\n")
                             protocol_secure = False
                             return protocol_secure
@@ -309,7 +319,10 @@ class KPartyBB84:
                         parties[uid].receive_check_bits(leader_uid)
                         parties[uid].broadcast_check_bits()
                         leader.receive_check_bits(uid)
-                        if leader.detected_eavesdropping:
+
+                        # If the leader detects eavesdropping on any channel,
+                        # then abort the run of the protocol.
+                        if leader.compromised_chls:
                             print("\nEavesdropping detected!\n")
                             protocol_secure = False
                             return protocol_secure
@@ -412,7 +425,7 @@ class KPartyBB84:
                     parties[uid].receive_check_bits(leader_uid)
                     parties[uid].broadcast_check_bits()
                     leader.receive_check_bits(uid)
-                    if leader.detected_eavesdropping:
+                    if leader.compromised_chls:
                         print("\nEavesdropping detected!\n")
                         protocol_secure = False
                         return protocol_secure
@@ -438,25 +451,24 @@ class KPartyBB84:
         return protocol_secure
 
     def run_one_step(self, display_data=True):
-        '''Run one iteration of the protocol.'''
-        if self.running_protocol:
+        '''Run one iteration of the set protocol.'''
+        if self.protocol_secure:
+            # Run one iteration of the set protocol.
             protocol_secure = self.protocol(**self.protocol_params)
-            self.running_protocol = protocol_secure
-
+            # If eavesdropping was detected in this run of the protocol, then
+            # prevent any future attempts to run an iteration of the protocol.
+            self.protocol_secure = protocol_secure
+            # Optionally print the data to the terminal.
             if display_data:
                 self.display_data()
-
-            if protocol_secure:
-                self.timestep += 1
-                self.cchl.timestep += 1
-                parties = self.network_manager.get_parties()
-                for uid in parties:
-                    parties[uid].timestep += 1
+            # Increment all of the timestep counters.
+            if self.protocol_secure:
+                self.next_timestep()
 
     def run_n_steps(self, n, display_bits=True):
         '''Run n iterations of the protocol.'''
         count = 0
-        while self.running_protocol and count < n:
+        while self.protocol_secure and count < n:
             self.run_one_step(display_data=False)
             count += 1
         self.display_data(display_bits)
@@ -611,11 +623,14 @@ class NetworkManager:
     def __init__(self, cchl, edges):
         network = nx.DiGraph(edges)
 
+        # Create a party for every node in the network.
         parties = {}
         for node_uid in network:
             party_name = party_names[node_uid]
-            parties[node_uid] = components.Party(node_uid, party_name, self, cchl)
+            parties[node_uid] = components.Party(node_uid, party_name,
+                                                 self, cchl)
 
+        # Create a quantum channel for every edge in the network.
         qchls = {}
         for edge in network.edges:
             qchl = components.QuantumChannel()
@@ -632,6 +647,7 @@ class NetworkManager:
 
             qchls[edge] = qchl
 
+        # Store the parties as nodes and the qchls as edges.
         nx.set_node_attributes(network, parties, "party")
         nx.set_edge_attributes(network, qchls, "qchl")
 
@@ -639,9 +655,30 @@ class NetworkManager:
         self.reset()
 
     def reset(self):
+        '''Reset the network to its configuration at timestep 0.'''
+        # Reset all of the parties in the network.
         parties = self.get_parties()
         for uid in parties:
             parties[uid].reset()
+        # Reset all of the quantum channels in the network.
+        qchls = self.get_qchls()
+        for uid in qchls:
+            qchls[uid].reset()
+        # Reset the network manager's timestep counter.
+        self.timestep = 0
+
+    def next_timestep(self):
+        '''Store the data from this timestep and set up for the next timestep.'''
+        # Increment the timestep for all the parties in the network.
+        parties = self.get_parties()
+        for uid in parties:
+            parties[uid].next_timestep()
+        # Increment the timestep for all the qchls in the network.
+        qchls = self.get_qchls()
+        for uid in qchls:
+            qchls[uid].next_timestep()
+        # Increment the network manager's timestep counter.
+        self.timestep += 1
 
     def get_successors(self, party_uid):
         return list(self.network.successors(party_uid))
@@ -658,91 +695,6 @@ class NetworkManager:
     def get_party(self, uid):
         return self.get_parties()[uid]
 
-
-class ClassicalChannel(UIComponent):
-
-    def __init__(self):
-        super().__init__()
-        self.reset()
-
-    def reset(self):
-        self.timestep = 0
-        self.messages = {}
-        super().reset()
-
-    ###########################################################################
-    # MESSAGE PROCESSING METHODS
-    ###########################################################################
-
-    # TODO make one message retrieval method
-    # Note that get_tx_bases and get_rx_bases are currently structured slightly
-    # differently from the other message retrieval methods. Is this necessary?
-
-    def get_tx_bases(self, timestep):
-        '''Retrieve all messages of type "broadcast_tx_bases" for the given timestep.'''
-        tx_bases = {}
-        for tx_uid in self.messages:
-            for msg in self.messages[tx_uid]:
-                if msg["type"] == "broadcast_tx_bases":
-                    if msg["timestep"] == timestep:
-                        tx_bases[tx_uid] = msg["data"]
-        return tx_bases
-
-    def get_rx_bases(self, timestep):
-        '''Retrieve all messages of type "broadcast_rx_bases" for the given timestep.'''
-        rx_bases = {}
-        for rx_uid in self.messages:
-            for msg in self.messages[rx_uid]:
-                if msg["type"] == "broadcast_rx_bases":
-                    if msg["timestep"] == timestep:
-                        rx_bases[rx_uid] = msg["data"]
-        return rx_bases
-
-    def get_msg_check_bits(self, timestep, sender_uid):
-        '''Retrieve all messages of type "broadcast_check_bits" for the given timestep.'''
-        check_bits = {}
-        if sender_uid in self.messages:
-            for msg in self.messages[sender_uid]:
-                if msg["type"] == "broadcast_check_bits":
-                    if msg["timestep"] == timestep:
-                        check_bits = msg["data"]
-        return check_bits
-
-    def get_flip_bit_instructions(self, timestep, sender_uid):
-        '''Retrieve a message from sender_uid of type "broadcast_flip_bit_instructions" for the given timestep.'''
-        flip_bit_instrs = {}
-        if sender_uid in self.messages:
-            for msg in self.messages[sender_uid]:
-                if msg["type"] == "broadcast_flip_bit_instructions":
-                    if msg["timestep"] == timestep:
-                        flip_bit_instrs = msg["data"]
-        return flip_bit_instrs
-
-    def get_msg_key_length(self, timestep, sender_uid):
-        key_length = math.inf
-        if sender_uid in self.messages:
-            for msg in self.messages[sender_uid]:
-                if msg["type"] == "broadcast_key_length":
-                    if msg["timestep"] == timestep:
-                        key_length = msg["data"]
-        return key_length
-
-    ###########################################################################
-    # UI METHODS
-    ###########################################################################
-
-    def ui_tick(self):
-        '''Progress to the next timestep.'''
-        data = {"messages": copy.deepcopy(self.messages)}
-        super().ui_tick(data)
-
-    ###########################################################################
-    # CLASSICAL COMMUNICATION METHODS
-    ###########################################################################
-
-    def add_message(self, sender_uid, message):
-        '''Add a message from sender_uid to the classical channel.'''
-        if sender_uid not in self.messages:
-            self.messages[sender_uid] = []
-        self.messages[sender_uid].append(message)
+    def get_qchls(self):
+        return nx.get_edge_attributes(self.network, "qchl")
 
