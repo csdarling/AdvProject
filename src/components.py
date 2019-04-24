@@ -125,8 +125,9 @@ class Party(UIComponent):
         self.name = name
         self.network_manager = network_manager
         self.cchl = cchl
-        self.is_eve = is_eve
-        self.sockets = {}
+        # self.is_eve = is_eve
+        self.tx_qchls = {}
+        self.rx_qchls = {}
         self.reset()
 
     def reset(self):
@@ -189,12 +190,21 @@ class Party(UIComponent):
         self.tstep_meas_bases = {}
         self.tstep_tx_uid = None
 
-    def add_socket(self, uid):
-        self.sockets[uid] = Socket(self)
+    def connect_tx_qchl(self, qchl, rx_uid):
+        '''Connect this party to the tx end of the given qchl, which is (believed to be) connected to rx_uid.'''
+        # Connect to the tx end of the qchl.
+        qchl.connect_tx_party(self)
+        # Store the qchl with the UID of the party that it is thought to
+        # connect to (this may be inaccurate if the qchl is intercepted).
+        self.tx_qchls[rx_uid] = qchl
 
-    def connect_to_qchl(self, uid, qchl):
-        self.add_socket(uid)
-        self.sockets[uid].connect_to_qchl(qchl)
+    def connect_rx_qchl(self, qchl, tx_uid):
+        '''Connect this party to the rx end of the given qchl, which is (believed to be) connected to tx_uid.'''
+        # Connect to the rx end of the qchl.
+        qchl.connect_rx_party(self)
+        # Store the qchl with the UID of the party that it is thought to
+        # connect to (this may be inaccurate if the qchl is intercepted).
+        self.rx_qchls[tx_uid] = qchl
 
     def store_value_in_dict(self, d, key, val):
         '''Store the key, val pair in dictionary d[self.timestep].'''
@@ -231,18 +241,14 @@ class Party(UIComponent):
         self.total_qubits_measured += 1
         return measured_value
 
-    def transmit_qubit(self, target_uid, qubit):
+    def transmit_qubit(self, target_uid, qubit_state):
         '''Transmit the qubit to the target_uid via a quantum channel.'''
-        socket = None
-        try:
-            socket = self.sockets[target_uid]
-        except KeyError:
-            raise KeyError(("Socket {} of Party {} (\"{}\") doesn't exist.\n"
-                            "Valid sockets: {}"
-                            ).format(target_uid, self.uid, self.name,
-                                     list(self.sockets.keys())))
+        if target_uid not in self.tx_qchls:
+            raise KeyError(("Qubit transmission from party {} to party {} "
+                            "failed: the parties are not connected via a "
+                            "quantum channel.").format(self.uid, target_uid))
 
-        socket.send(qubit, self.uid, target_uid)
+        self.tx_qchls[target_uid].send(qubit_state)
         self.total_qubits_transmitted += 1
 
     def send_qubit(self, target_uid, bit, basis):
@@ -563,27 +569,12 @@ class Party(UIComponent):
                 self.secret_keys.pop(timestep)
 
 
-class Socket:
-
-    def __init__(self, party):
-        self.party = party
-
-    def connect_to_qchl(self, qchl):
-        qchl.add_socket(self.party.uid, self)
-        self.qchl = qchl
-
-    def send(self, qubit, sender_uid, target_uid):
-        self.qchl.send(qubit, sender_uid, target_uid)
-
-    def receive(self, qubit):
-        self.party.receive_qubit(qubit)
-
-
 class QuantumChannel(UIComponent):
 
     def __init__(self):
-        self.sockets = {}
-        self.intercepted_edges = {}
+        self.tx_party = None
+        self.rx_party = None
+        # self.intercepted_edges = {}
         self.reset()
 
     def reset(self):
@@ -611,17 +602,34 @@ class QuantumChannel(UIComponent):
         '''Reset all fields that should not persist past the current timestep.'''
         self.tstep_state = None
 
-    def add_socket(self, uid, socket):
-        self.sockets[uid] = socket
+    def connect_tx_party(self, party):
+        '''Connect a party to the transmitting end of the quantum channel.'''
+        if self.tx_party is not None:
+            raise ValueError("Transmitting party tx_party is already set.")
+        self.tx_party = party
 
-    def send(self, qubit_state, sender_uid, target_uid):
+    def connect_rx_party(self, party):
+        '''Connect a party to the receiving end of the quantum channel.'''
+        if self.rx_party is not None:
+            raise ValueError("Receiving party rx_party is already set.")
+        self.rx_party = party
+
+    def disconnect_tx_party(self):
+        '''Disconnect the current tx_party.'''
+        self.tx_party = None
+
+    def disconnect_rx_party(self):
+        '''Disconnect the current rx_party.'''
+        self.rx_party = None
+
+    def send(self, qubit_state):#, sender_uid, target_uid):
         '''Transmit a qubit state from sender to target via the quantum channel.'''
         # Save a copy of the qubit state as it is during transmission through
         # the quantum channel. (This is just so I can display it in the UI -
         # would not be possible in the real world!)
         self.tstep_state = state.NQubitState(qubit_state.coefficients)
         # Pass the qubit to the intended recipient.
-        self.sockets[target_uid].receive(qubit_state)
+        self.rx_party.receive_qubit(qubit_state)
 
 
 class EPRPairSource:
@@ -636,14 +644,13 @@ class EPRPairSource:
         initial_state = 1 / math.sqrt(2) * np.array([1] + [0] * (2**n - 2) + [1])
         return state.NQubitState(initial_state)
 
-    def send_qubit(self, socket0, socket1):
+    def send_qubit(self, party0, party1):
         n_qubit_state = self.create_state()
         qubit0 = state.EntangledQubit(n_qubit_state, 0)
         qubit1 = state.EntangledQubit(n_qubit_state, 1)
 
         self.total_sent += 1
 
-        socket0.receive(qubit0)
-        # time.sleep(0.05)
-        socket1.receive(qubit1)
+        party0.receive_qubit(qubit0)
+        party1.receive_qubit(qubit1)
 

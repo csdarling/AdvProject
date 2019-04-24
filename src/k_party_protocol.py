@@ -14,41 +14,41 @@ from pprint import pprint
 
 party_names = string.ascii_uppercase[:4] + string.ascii_uppercase[5:]
 
-class UIComponent:
+# class UIComponent:
 
-    def __init__(self):
-        self.reset()
-        self.ui_in_replay_mode = True
+#     def __init__(self):
+#         self.reset()
+#         self.ui_in_replay_mode = True
 
-    def reset(self):
-        self.ui_timestep = 0
-        self.ui_stored_data = {}
+#     def reset(self):
+#         self.ui_timestep = 0
+#         self.ui_stored_data = {}
 
-    def ui_tick(self, data={}):
-        '''Store the data and progress to the next timestep.'''
-        if not self.ui_in_replay_mode:
-            self.ui_stored_data[self.ui_timestep] = data
+#     def ui_tick(self, data={}):
+#         '''Store the data and progress to the next timestep.'''
+#         if not self.ui_in_replay_mode:
+#             self.ui_stored_data[self.ui_timestep] = data
 
-        next_timestep = self.ui_timestep + 1
-        if next_timestep not in self.ui_stored_data:
-            self.log[next_timestep] = {}
-            self.ui_in_replay_mode = False
+#         next_timestep = self.ui_timestep + 1
+#         if next_timestep not in self.ui_stored_data:
+#             self.log[next_timestep] = {}
+#             self.ui_in_replay_mode = False
 
-        self.ui_timestep += 1
+#         self.ui_timestep += 1
 
-    def ui_toggle_replay(self):
-        self.ui_in_replay_mode = not self.ui_in_replay_mode
+#     def ui_toggle_replay(self):
+#         self.ui_in_replay_mode = not self.ui_in_replay_mode
 
-    def ui_rewind_to_timestep(self, timestep):
-        if timestep in self.ui_stored_data:
-            # If not in replay mode, then only keep the stored data up to the
-            # specified timestep.
-            if not self.ui_in_replay_mode:
-                ui_stored_data = {}
-                for t in range(timestep):
-                    ui_stored_data[t] = self.ui_stored_data[t]
-                self.ui_stored_data = ui_stored_data
-            self.ui_timestep = timestep
+#     def ui_rewind_to_timestep(self, timestep):
+#         if timestep in self.ui_stored_data:
+#             # If not in replay mode, then only keep the stored data up to the
+#             # specified timestep.
+#             if not self.ui_in_replay_mode:
+#                 ui_stored_data = {}
+#                 for t in range(timestep):
+#                     ui_stored_data[t] = self.ui_stored_data[t]
+#                 self.ui_stored_data = ui_stored_data
+#             self.ui_timestep = timestep
 
 
 class KPartyBB84:
@@ -630,7 +630,13 @@ class KPartyBB84:
 class NetworkManager:
 
     def __init__(self, cchl, edges):
+        if not edges:
+            raise ValueError("The network must have at least one edge.")
+
         network = nx.DiGraph(edges)
+
+        if len(network) < 2:
+            raise ValueError("The network must have at least 2 nodes.")
 
         # Create a party for every node in the network.
         parties = {}
@@ -643,16 +649,15 @@ class NetworkManager:
         qchls = {}
         for edge in network.edges:
             qchl = components.QuantumChannel()
-            u_uid, v_uid = edge
-
-            party_u = parties[u_uid]
-            party_v = parties[v_uid]
+            tx_uid, rx_uid = edge
+            tx_party = parties[tx_uid]
+            rx_party = parties[rx_uid]
 
             # qchl.add_socket(u_uid, party_u.socket)
             # qchl.add_socket(v_uid, party_v.socket)
 
-            party_u.connect_to_qchl(v_uid, qchl)
-            party_v.connect_to_qchl(u_uid, qchl)
+            tx_party.connect_tx_qchl(qchl, rx_uid)
+            rx_party.connect_rx_qchl(qchl, tx_uid)
 
             qchls[edge] = qchl
 
