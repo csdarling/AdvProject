@@ -1,3 +1,4 @@
+import networkx as nx
 from user_interface import UI
 
 
@@ -9,6 +10,7 @@ class BB84(UI):
         self.num_timesteps = 50
         self.protocol_id = 0
         self.check_bit_prob = 0.2
+        self.layout = nx.circular_layout
 
 
 class BB84WithEavesdropping(UI):
@@ -20,6 +22,7 @@ class BB84WithEavesdropping(UI):
         self.protocol_id = 0
         self.check_bit_prob = 0.2
         self.intercepted_edges = [(0, 1)]
+        self.layout = nx.circular_layout
 
 
 class BBM92(UI):
