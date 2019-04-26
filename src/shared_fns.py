@@ -77,6 +77,15 @@ def reorder_by_uid(by_timestep):
 
     return by_uid
 
+def represent_basis_by_char(basis):
+    '''Represent a np.array basis by a character.'''
+    basis_char = '?'
+    if np.allclose(basis, consts.STD_BASIS):
+        basis_char = 'S'
+    elif np.allclose(basis, consts.HAD_BASIS):
+        basis_char = 'H'
+    return basis_char
+
 def represent_bases_by_chars(bases):
     '''Convert a (dict of dicts of np.arrays) to a (dict of dicts of chars).
 
@@ -87,11 +96,7 @@ def represent_bases_by_chars(bases):
         basis_chars[uid] = {}
         for timestep in bases[uid]:
             basis = bases[uid][timestep]
-            basis_char = '?'
-            if np.allclose(basis, consts.STANDARD_BASIS):
-                basis_char = 'S'
-            elif np.allclose(basis, consts.HADAMARD_BASIS):
-                basis_char = 'H'
+            basis_char = represent_basis_by_char(basis)
             basis_chars[uid][timestep] = basis_char
 
     return basis_chars

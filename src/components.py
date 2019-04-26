@@ -5,7 +5,6 @@ import warnings
 import math
 import copy
 
-import consts
 import shared_fns
 import state
 
@@ -29,249 +28,146 @@ class UIComponent:
         return stored_data
 
 
-class ClassicalChannel(UIComponent):
+class QuantumChannel(UIComponent):
 
     def __init__(self):
+        self.tx_device = None
+        self.rx_device = None
+        self.intercepted = False
         self.reset()
 
     def reset(self):
-        '''Reset the classical channel to its configuration at timestep 0.'''
+        '''Reset the quantum channel to its configuration at timestep 0.'''
         self.timestep = 0
-        self.tstep_messages = {}
+        self.tstep_state = None
         self.stored_data = {}
 
-    def store_timestep_data(self):
-        '''Store the data from this timestep.'''
-        self.stored_data = {
-            "tstep_messages": copy.deepcopy(self.tstep_messages)
-        }
-
-    def reset_tstep_fields(self):
-        '''Reset all fields that should not persist past the current timestep.'''
-        self.tstep_messages = {}
-
-    ###########################################################################
-    # MESSAGE PROCESSING METHODS
-    ###########################################################################
-
-    # TODO make a single, generic message retrieval method
-    # Note that get_tx_bases and get_rx_bases are currently structured slightly
-    # differently from the other message retrieval methods. Is this necessary?
-
-    def get_tx_bases(self, timestep):
-        '''Retrieve all messages of type "broadcast_tx_bases" for the given timestep.'''
-        tx_bases = {}
-        for tx_uid in self.tstep_messages:
-            for msg in self.tstep_messages[tx_uid]:
-                if msg["type"] == "broadcast_tx_bases":
-                    if msg["timestep"] == timestep:
-                        tx_bases[tx_uid] = msg["data"]
-        return tx_bases
-
-    def get_rx_bases(self, timestep):
-        '''Retrieve all messages of type "broadcast_rx_bases" for the given timestep.'''
-        rx_bases = {}
-        for rx_uid in self.tstep_messages:
-            for msg in self.tstep_messages[rx_uid]:
-                if msg["type"] == "broadcast_rx_bases":
-                    if msg["timestep"] == timestep:
-                        rx_bases[rx_uid] = msg["data"]
-        return rx_bases
-
-    def get_msg_check_bits(self, timestep, sender_uid):
-        '''Retrieve all messages of type "broadcast_check_bits" for the given timestep.'''
-        check_bits = {}
-        if sender_uid in self.tstep_messages:
-            for msg in self.tstep_messages[sender_uid]:
-                if msg["type"] == "broadcast_check_bits":
-                    if msg["timestep"] == timestep:
-                        check_bits = msg["data"]
-        return check_bits
-
-    def get_flip_bit_instructions(self, timestep, sender_uid):
-        '''Retrieve a message from sender_uid of type "broadcast_flip_bit_instructions" for the given timestep.'''
-        flip_bit_instrs = {}
-        if sender_uid in self.tstep_messages:
-            for msg in self.tstep_messages[sender_uid]:
-                if msg["type"] == "broadcast_flip_bit_instructions":
-                    if msg["timestep"] == timestep:
-                        flip_bit_instrs = msg["data"]
-        return flip_bit_instrs
-
-    def get_msg_key_length(self, timestep, sender_uid):
-        key_length = math.inf
-        if sender_uid in self.tstep_messages:
-            for msg in self.tstep_messages[sender_uid]:
-                if msg["type"] == "broadcast_key_length":
-                    if msg["timestep"] == timestep:
-                        key_length = msg["data"]
-        return key_length
-
-    ###########################################################################
-    # CLASSICAL COMMUNICATION METHODS
-    ###########################################################################
-
-    def add_message(self, sender_uid, message):
-        '''Add a message from sender_uid to the classical channel.'''
-        if sender_uid not in self.tstep_messages:
-            self.tstep_messages[sender_uid] = []
-        self.tstep_messages[sender_uid].append(message)
-
-
-class Party(UIComponent):
-
-    def __init__(self, uid, name, network_manager, cchl, is_eve=False):
-        self.uid = uid
-        self.name = name
-        self.network_manager = network_manager
-        self.cchl = cchl
-        # self.is_eve = is_eve
-        self.tx_qchls = {}
-        self.rx_qchls = {}
-        self.reset()
-
-    def reset(self):
-        '''Reset the party to its configuration at timestep 0.'''
-        self.timestep = 0
-        # Record every interaction with a qubit.
-        self.total_qubits_generated = 0
-        self.total_qubits_transmitted = 0
-        self.total_qubits_received = 0
-        self.total_qubits_measured = 0
-        self.total_qubits_forwarded = 0
-        # Specify what the party should do when it receives a qubit state.
-        self.measure_received_qubits = True
-        self.forward_received_qubits = False
-        self.qubit_forwarding_uid = None
-        # Store all the bases used for encoding and measurement of qubits.
-        # Format: {time0: {uidA: basis, uidB: basis}, time1: {uidA: basis}, ...}
-        # E.g. {0: {4: HAD, 7: STD}, 1: {}, 2: {4: STD}}
-        self.tx_bases = {}
-        self.rx_bases = {}
-        # Store all the transmitted and received bits.
-        # Format: {t0: {uidA: bit, uidB: bit}, t1: {uidA: bit}, ...}
-        self.tx_bits = {}
-        self.rx_bits = {}
-        # Store the bits that are used in the keys. (Format same as tx_bits.)
-        self.sifted_keys = {}
-        self.check_bits  = {}
-        self.secret_keys = {}
-        # Track which channels of communication are known to be compromised.
-        self.compromised_chls = []
-        # Fields that don't persist between timesteps.
-        self.tstep_meas_bases = {}  # E.g. {uidA: HAD, uidB: STD}
-        self.tstep_tx_uid = None
-        # Store the entire configuration of the party at each timestep.
-        self.stored_data = {}
+    def next_timestep(self):
+        '''Store the data from this timestep and increment the timestep counter.'''
+        # Store the state that was transmitted in this timestep.
+        self.store_timestep_data()
+        # Reset the current state field.
+        self.reset_tstep_fields()
+        # Increment the timestep counter.
+        self.timestep += 1
 
     def store_timestep_data(self):
         '''Store the data from this timestep.'''
         self.stored_data[self.timestep] = {
-            "total_qubits_generated": self.total_qubits_generated,
-            "total_qubits_transmitted": self.total_qubits_transmitted,
-            "total_qubits_received": self.total_qubits_received,
-            "measure_received_qubits": self.measure_received_qubits,
-            "forward_received_qubits": self.forward_received_qubits,
-            "qubit_forwarding_uid": self.qubit_forwarding_uid,
-            "tx_bases": copy.deepcopy(self.tx_bases),
-            "rx_bases": copy.deepcopy(self.rx_bases),
-            "tx_bits": copy.deepcopy(self.tx_bits),
-            "rx_bits": copy.deepcopy(self.rx_bits),
-            "sifted_keys": copy.deepcopy(self.sifted_keys),
-            "check_bits": copy.deepcopy(self.check_bits),
-            "secret_keys": copy.deepcopy(self.secret_keys),
-            "compromised_chls": copy.deepcopy(self.compromised_chls),
-            "tstep_meas_bases": copy.deepcopy(self.tstep_meas_bases),
-            "tstep_tx_uid": self.tstep_tx_uid,
+            "state": self.tstep_state
         }
 
     def reset_tstep_fields(self):
         '''Reset all fields that should not persist past the current timestep.'''
-        self.tstep_meas_bases = {}
-        self.tstep_tx_uid = None
+        self.tstep_state = None
+
+    def connect_tx_device(self, party):
+        '''Connect a party to the transmitting end of the quantum channel.'''
+        if self.tx_device is not None:
+            raise ValueError("Transmitting party tx_device is already set.")
+        self.tx_device = party
+
+    def connect_rx_device(self, party):
+        '''Connect a party to the receiving end of the quantum channel.'''
+        if self.rx_device is not None:
+            raise ValueError("Receiving party rx_device is already set.")
+        self.rx_device = party
+
+    def disconnect_tx_device(self):
+        '''Disconnect the current tx_device.'''
+        self.tx_device = None
+
+    def disconnect_rx_device(self):
+        '''Disconnect the current rx_device.'''
+        self.rx_device = None
+
+    def transmit(self, quantum_state):
+        '''Transmit a quantum state from sender to target via the quantum channel.'''
+        if not (isinstance(quantum_state, state.Qubit) or
+                isinstance(quantum_state, state.NQubitState)):
+            raise TypeError(("Can't transmit an object of type {} across a "
+                             "quantum channel.").format(type(quantum_state)))
+        # Save a copy of the quantum state as it is during transmission through
+        # the quantum channel. (This is just so I can display it in the UI -
+        # would not be possible in the real world!)
+        self.tstep_state = state.NQubitState(quantum_state.coefficients)
+        # Pass the quantum state to the intended recipient.
+        # self.rx_device.receive_qubit(quantum_state)
+        self.rx_device.receive(quantum_state)
+
+
+class QKDDevice:
+
+    def __init__(self, uid):
+        self.uid = uid
+        self.tx_qchls = {}
+        self.rx_qchls = {}
 
     def connect_tx_qchl(self, qchl, rx_uid):
-        '''Connect this party to the tx end of the given qchl, which is (believed to be) connected to rx_uid.'''
+        '''Connect this device to the tx end of the given qchl, which is (believed to be) connected to rx_uid.'''
         # Connect to the tx end of the qchl.
-        qchl.connect_tx_party(self)
-        # Store the qchl with the UID of the party that it is thought to
+        qchl.connect_tx_device(self)
+        # Store the qchl with the UID of the device that it is thought to
         # connect to (this may be inaccurate if the qchl is intercepted).
         self.tx_qchls[rx_uid] = qchl
 
     def connect_rx_qchl(self, qchl, tx_uid):
-        '''Connect this party to the rx end of the given qchl, which is (believed to be) connected to tx_uid.'''
+        '''Connect this device to the rx end of the given qchl, which is (believed to be) connected to tx_uid.'''
         # Connect to the rx end of the qchl.
-        qchl.connect_rx_party(self)
-        # Store the qchl with the UID of the party that it is thought to
+        qchl.connect_rx_device(self)
+        # Store the qchl with the UID of the device that it is thought to
         # connect to (this may be inaccurate if the qchl is intercepted).
         self.rx_qchls[tx_uid] = qchl
 
-    def store_value_in_dict(self, d, key, val):
-        '''Store the key, val pair in dictionary d[self.timestep].'''
-        if self.timestep not in d:
-            d[self.timestep] = {}
-
-        d[self.timestep][key] = val
-
     def next_qubit_is_from(self, tx_uid):
-        '''Note that party tx_uid is about to send a qubit to this party.'''
+        '''Note that device tx_uid is about to send a qubit to this device.'''
         self.tstep_tx_uid = tx_uid
 
     def measure_next_qubit_wrt(self, basis):
         '''Measure the next qubit from tstep_tx_uid w.r.t. the given basis.'''
         sender_uid = self.tstep_tx_uid
-        self.tstep_meas_bases[sender_uid] = basis
-        self.measure_received_qubits = True
+        self.tstep_rx_bases[sender_uid] = basis
+        self.measure_received_qstates = True
 
     def forward_qubits_to(self, uid):
         '''Forward received qubits to the given UID.'''
-        self.qubit_forwarding_uid = uid
-        self.forward_received_qubits = True
+        self.qstate_forwarding_uid = uid
+        self.forward_received_qstates = True
 
-    def generate_qubit(self, bit, basis):
-        '''Create a new qubit representing the given bit and basis.'''
-        initial_state = np.linalg.eigh(basis)[1][bit]
-        qubit = state.NQubitState(initial_state)
-        self.total_qubits_generated += 1
-        return qubit
+    def generate_state(self, coeffs):
+        '''Create a new state with the given coefficients.'''
+        return state.NQubitState(coeffs)
 
-    def measure_qubit(self, qubit_state, basis):
-        '''Measure the state w.r.t. the given basis.'''
-        measured_value = qubit_state.measure(basis)
-        self.total_qubits_measured += 1
-        return measured_value
+    def generate_qubits(self, state_coeffs):
+        '''Create a state and split it into its individual qubits.'''
+        n_qubit_state = self.generate_state(state_coeffs)
+        return n_qubit_state.split_into_qubits()
 
-    def transmit_qubit(self, target_uid, qubit_state):
-        '''Transmit the qubit to the target_uid via a quantum channel.'''
-        if target_uid not in self.tx_qchls:
-            raise KeyError(("Qubit transmission from party {} to party {} "
-                            "failed: the parties are not connected via a "
-                            "quantum channel.").format(self.uid, target_uid))
+    def measure(self, quantum_state, operator):
+        '''Measure the state using the given operator.'''
+        return quantum_state.measure(operator)
 
-        self.tx_qchls[target_uid].send(qubit_state)
-        self.total_qubits_transmitted += 1
+    def transmit(self, quantum_state, rx_uid):
+        '''Transmit the quantum state to rx_uid via a quantum channel.'''
+        if rx_uid not in self.tx_qchls:
+            raise KeyError(("Transmission from QKD device {} to QKD device {}"
+                            " failed: the devices are not connected via a "
+                            "quantum channel.").format(self.uid, rx_uid))
 
-    def send_qubit(self, target_uid, bit, basis):
-        '''Encode the given bit w.r.t. the given basis to generate a new qubit
-        and transmit this qubit to the party with the specified uid.'''
-        # Generate the qubit using the given bit and basis.
-        qubit = self.generate_qubit(bit, basis)
+        self.tx_qchls[rx_uid].transmit(quantum_state)
 
-        # Keep a record of the bit and basis used to generate the qubit.
-        self.store_value_in_dict(self.tx_bases, target_uid, basis)
-        self.store_value_in_dict(self.tx_bits, target_uid, bit)
+    def receive(self, quantum_state):
+        '''Handle a received quantum state.'''
+        pass
 
-        # Transmit the qubit to the target party.
-        self.transmit_qubit(target_uid, qubit)
-
-    def receive_qubit(self, qubit):
+    def receive_qubit_TODO_old(self, qubit):
         '''Handle a received qubit (measure it and/or forward it).'''
         bit, basis = (None, None)
         # Measure the qubit.
         if self.measure_received_qubits:
             sender_uid = self.tstep_tx_uid
-            basis = self.tstep_meas_bases[sender_uid]
-            self.tstep_meas_bases[sender_uid] = None
+            basis = self.tstep_rx_bases[sender_uid]
+            self.tstep_rx_bases[sender_uid] = None
 
             if basis is None:
                 raise TypeError(("The measurement basis is set to None for "
@@ -301,6 +197,499 @@ class Party(UIComponent):
             self.total_qubits_forwarded += 1
 
         self.total_qubits_received += 1
+
+
+class Party(QKDDevice, UIComponent):
+
+    def __init__(self, uid, name, network_manager, cchl, is_eve=False):
+        super().__init__(uid)
+        self.name = name
+        self.network_manager = network_manager
+        self.cchl = cchl
+        self.is_eve = is_eve
+        self.reset()
+
+    def reset(self):
+        '''Reset the party to its configuration at timestep 0.'''
+        self.timestep = 0
+
+        # Record every interaction with a qubit.
+        self.total_qstates_generated = 0
+        self.total_qstates_transmitted = 0
+        self.total_qstates_received = 0
+        self.total_qstates_measured = 0
+        self.total_qstates_forwarded = 0
+        # Specify what the party should do when it receives a qubit state.
+        self.measure_received_qstates = True
+        self.forward_received_qstates = False
+        self.qstate_forwarding_uid = None
+
+        # Store all the bases used for encoding and measurement of qubits.
+        # Format: {time0: {uidA: basis, uidB: basis}, time1: {uidA: basis}, ...}
+        # E.g. {0: {4: HAD, 7: STD}, 1: {}, 2: {4: STD}}
+        self.tx_bases = {0: {}}
+        self.rx_bases = {0: {}}
+
+        # Store all the transmitted and received bits.
+        # Format: {t0: {uidA: bit, uidB: bit}, t1: {uidA: bit}, ...}
+        self.tx_bits = {0: {}}
+        self.rx_bits = {0: {}}
+
+        # Store the bits that are used in the keys. (Format same as tx_bits.)
+        self.sifted_keys = {}
+        self.check_bits  = {}
+        self.secret_keys = {}
+
+        # Track which channels of communication are known to be compromised.
+        self.compromised_chls = []
+
+        # Fields that don't persist between timesteps.
+        self.tstep_rx_bases = {}  # E.g. {uidA: HAD, uidB: STD}
+        self.tstep_tx_uid = None
+
+        # Store the entire configuration of the party at each timestep.
+        self.stored_data = {}
+
+    def store_timestep_data(self):
+        '''Store the data from this timestep.'''
+        self.stored_data[self.timestep] = {
+            # From quantum device
+            "total_qstates_generated": self.total_qstates_generated,
+            "total_qstates_transmitted": self.total_qstates_transmitted,
+            "total_qstates_received": self.total_qstates_received,
+            "total_qstates_measured": self.total_qstates_measured,
+            "total_qstates_forwarded": self.total_qstates_forwarded,
+            "measure_received_qstates": self.measure_received_qstates,
+            "forward_received_qstates": self.forward_received_qstates,
+            "qstate_forwarding_uid": self.qstate_forwarding_uid,
+            # From classical computer
+            "tx_bases": copy.deepcopy(self.tx_bases),
+            "rx_bases": copy.deepcopy(self.rx_bases),
+            "tx_bits": copy.deepcopy(self.tx_bits),
+            "rx_bits": copy.deepcopy(self.rx_bits),
+            "sifted_keys": copy.deepcopy(self.sifted_keys),
+            "check_bits": copy.deepcopy(self.check_bits),
+            "secret_keys": copy.deepcopy(self.secret_keys),
+            "compromised_chls": copy.deepcopy(self.compromised_chls),
+            "tstep_rx_bases": copy.deepcopy(self.tstep_rx_bases),
+            "tstep_tx_uid": self.tstep_tx_uid,
+        }
+
+    def reset_tstep_fields(self):
+        '''Reset all fields that should not persist past the current timestep.'''
+        self.tstep_rx_bases = {}
+        self.tstep_tx_uid = None
+
+    def choose_from(self, options):
+        return random.choice(options)
+
+
+
+    def generate_state(self, coeffs):
+        '''Create a new state with the given coefficients.'''
+        state = super().generate_state(coeffs)
+        self.total_qstates_generated += 1
+        return state
+
+    def transmit(self, quantum_state, rx_uid):
+        '''Transmit the quantum state to rx_uid via a quantum channel.'''
+        super().transmit(quantum_state, rx_uid)
+        self.total_qstates_transmitted += 1
+
+    def send_state(self, bit, basis, rx_uid):
+        '''Encode the given bit w.r.t. the given basis to generate a new state
+        and transmit this state to the party with the specified uid.'''
+        # Generate the state using the given bit and basis.
+        state = self.generate_state(basis[bit])
+
+        # Keep a record of the bit and basis used to generate the state.
+        self.store_value_in_dict(self.tx_bases, rx_uid, basis)
+        self.store_value_in_dict(self.tx_bits, rx_uid, bit)
+
+        # Transmit the state to the target party.
+        self.transmit(state, rx_uid)
+
+    def measure(self, quantum_state, operator):
+        '''Measure the state using the given operator.'''
+        measured_value = super().measure(quantum_state, operator)
+        self.total_qstates_measured += 1
+        return measured_value
+
+
+
+    def receive(self, qstate):
+        '''Handle a received quantum state (measure it and/or forward it).'''
+        bit, basis = (None, None)
+        # Measure the quantum state.
+        if self.measure_received_qstates:
+            sender_uid = self.tstep_tx_uid
+            basis = self.tstep_rx_bases[sender_uid]
+            self.tstep_rx_bases[sender_uid] = None
+
+            if basis is None:
+                raise TypeError(("The measurement basis is set to None for "
+                                 "Party {} (\"{}\"), so the received quantum "
+                                 "state can't be measured.").format(self.uid,
+                                                                    self.name))
+
+            operator = shared_fns.get_measurement_operator([0, 1], basis)
+            bit = self.measure(qstate, operator)
+
+            # Keep a record of the measurement basis and the measured bit.
+            self.store_value_in_dict(self.rx_bases, sender_uid, basis)
+            self.store_value_in_dict(self.rx_bits, sender_uid, bit)
+
+        # Forward the quantum state to the qstate_forwarding_uid.
+        if self.forward_received_qstates:
+            # Store the basis and bit in the dictionary of tx_bases.
+            # Note: If forwarding without measuring, then the basis and the
+            # bit are both stored as None.
+            self.store_value_in_dict(self.tx_bases,
+                                     self.qstate_forwarding_uid,
+                                     basis)
+            self.store_value_in_dict(self.tx_bits,
+                                     self.qstate_forwarding_uid,
+                                     bit)
+            # Forward the quantum state to the qstate_forwarding_uid.
+            self.transmit(qstate, self.qstate_forwarding_uid)
+            self.total_qstates_forwarded += 1
+
+        self.total_qstates_received += 1
+
+    def expect_tx_from(self, tx_uid):
+        '''Note that tx_uid is about to send a quantum state to this party.'''
+        self.tstep_tx_uid = tx_uid
+
+    def measure_wrt(self, basis):
+        '''Measure the next quantum state from tstep_tx_uid w.r.t. the given basis.'''
+        sender_uid = self.tstep_tx_uid
+        self.tstep_rx_bases[sender_uid] = basis
+        self.measure_received_qstates = True
+
+    def store_value_in_dict(self, d, key, val):
+        '''Store the key, val pair in dictionary d[self.timestep].'''
+        if self.timestep not in d:
+            d[self.timestep] = {}
+
+        d[self.timestep][key] = val
+
+    ###########################################################################
+    # CLASSICAL LOGIC
+    ###########################################################################
+
+    def broadcast_tx_bases(self, timestep):
+        '''Broadcast the tx_bases on the classical channel.'''
+        msg_data = {}
+        if timestep in self.tx_bases:
+            msg_data = self.tx_bases[timestep]
+
+        message = {"timestep": timestep,
+                   "type": "broadcast_tx_bases",
+                   "data": msg_data}
+
+        # self.broadcast("add_message", self.uid, message)
+        self.cchl.add_message(self.uid, message)
+
+    def broadcast_rx_bases(self, timestep):
+        '''Broadcast the rx_bases on the classical channel.'''
+        msg_data = {}
+        if timestep in self.rx_bases:
+            msg_data = self.rx_bases[timestep]
+
+        message = {"timestep": self.timestep,
+                   "type": "broadcast_rx_bases",
+                   "data": msg_data}
+
+        # self.broadcast("add_message", self.uid, message)
+        self.cchl.add_message(self.uid, message)
+
+    def add_bit_to_keys(self, uid):
+        '''Add the bit from the current timestep to the keys for the given uid.'''
+        # If the uid is in the rx_bits dictionary, then store the rx_bit value.
+        if self.timestep in self.rx_bits:
+            if uid in self.rx_bits[self.timestep]:
+                bit = self.rx_bits[self.timestep][uid]
+                self.store_value_in_dict(self.sifted_keys, uid, bit)
+
+        # If the uid is contained in both rx_bits and tx_bits, then the rx bit
+        # is overwritten by the tx bit.
+        if self.timestep in self.tx_bits:
+            if uid in self.tx_bits[self.timestep]:
+                bit = self.tx_bits[self.timestep][uid]
+                self.store_value_in_dict(self.sifted_keys, uid, bit)
+
+        self.synch_sifted_and_secret_keys()
+
+    def add_all_bits_to_keys(self):
+        '''Extend the keys using the tx bits or rx bits from this timestep.'''
+        # Update the secret key for each uid in the rx_bits dictionary.
+        if self.timestep in self.rx_bits:
+            for uid in self.rx_bits[self.timestep]:
+                bit = self.rx_bits[self.timestep][uid]
+                self.store_value_in_dict(self.sifted_keys, uid, bit)
+
+        # If a uid is contained in both rx_bits and tx_bits, then the rx_bits
+        # are overwritten by the tx_bits.
+        if self.timestep in self.tx_bits:
+            for uid in self.tx_bits[self.timestep]:
+                bit = self.tx_bits[self.timestep][uid]
+                self.store_value_in_dict(self.sifted_keys, uid, bit)
+
+        self.synch_sifted_and_secret_keys()
+
+    def synch_sifted_and_secret_keys(self):
+        '''Update the secret keys to match the sifted keys.'''
+        self.secret_keys = copy.deepcopy(self.sifted_keys)
+
+    def broadcast_TODO_unused(self, msg, *args):
+        msg_func = getattr(self.cchl, msg)
+        # print("{} broadcasting message {}".format(self.name, msg))
+        return msg_func(*args)
+
+    def add_check_bit(self, uid):
+        '''If there is a bit in the current timestep of the sifted key for the
+        party with the given UID, then use this bit as a check bit.'''
+        if uid in self.sifted_keys[self.timestep]:
+            # Use the bit from this timestep as a check bit.
+            check_bit = self.sifted_keys[self.timestep][uid]
+            # Store this bit in the check_bits dictionary.
+            self.store_value_in_dict(self.check_bits, uid, check_bit)
+
+    def remove_check_bits_from_secret_keys(self):
+        '''Remove all check bits from the secret keys.'''
+        # Remove check bits from the secret keys.
+        for timestep in self.check_bits:
+            if timestep in self.secret_keys:
+                for uid in self.check_bits[timestep]:
+                    if uid in self.secret_keys[timestep]:
+                        self.secret_keys[timestep].pop(uid)
+
+        # Remove any timesteps of the secret keys that are now empty.
+        for timestep in list(self.secret_keys):
+            if not self.secret_keys[timestep]:
+                self.secret_keys.pop(timestep)
+
+    def broadcast_check_bits(self):
+        '''Broadcast all the check bits for every party and timestep.'''
+        check_bits = copy.deepcopy(self.check_bits)
+        message = {
+            "timestep": self.timestep,
+            "type": "broadcast_check_bits",
+            "data": check_bits
+        }
+        self.cchl.add_message(self.uid, message)
+
+    def receive_check_bits(self, sender_uid):
+        '''Test for eavesdropping using the check bits.'''
+        sender_check_bits = self.cchl.get_msg_check_bits(self.timestep,
+                                                         sender_uid)
+
+        # Check for eavesdropping by testing whether the sender's check bits
+        # match this party's check bits for every timestep.
+        sender_check_bits = shared_fns.reorder_by_uid(sender_check_bits)
+        own_check_bits = shared_fns.reorder_by_uid(self.check_bits)
+        compromised = (
+            self.uid in sender_check_bits and sender_uid in own_check_bits
+            and sender_check_bits[self.uid] != own_check_bits[sender_uid]
+        )
+        if compromised:
+            self.compromised_chls.append(sender_uid)
+
+
+class PartyTODODelete(UIComponent, QKDDevice):
+
+    def __init__(self, uid, name, network_manager, cchl, is_eve=False):
+        self.uid = uid
+        self.name = name
+        self.network_manager = network_manager
+        self.cchl = cchl
+        # self.is_eve = is_eve
+        self.tx_qchls = {}
+        self.rx_qchls = {}
+        self.reset()
+        super().__init__()
+
+    def reset(self):
+        '''Reset the party to its configuration at timestep 0.'''
+        self.timestep = 0
+
+        # Record every interaction with a qubit.
+        # self.total_qubits_generated = 0
+        self.total_states_generated = 0
+        self.total_qubits_transmitted = 0
+        self.total_qubits_received = 0
+        self.total_qubits_measured = 0
+        self.total_qubits_forwarded = 0
+        # Specify what the party should do when it receives a qubit state.
+        self.measure_received_qubits = True
+        self.forward_received_qubits = False
+        self.qubit_forwarding_uid = None
+
+        # Store all the bases used for encoding and measurement of qubits.
+        # Format: {time0: {uidA: basis, uidB: basis}, time1: {uidA: basis}, ...}
+        # E.g. {0: {4: HAD, 7: STD}, 1: {}, 2: {4: STD}}
+        self.tx_bases = {}
+        self.rx_bases = {}
+        # Store all the transmitted and received bits.
+        # Format: {t0: {uidA: bit, uidB: bit}, t1: {uidA: bit}, ...}
+        self.tx_bits = {}
+        self.rx_bits = {}
+        # Store the bits that are used in the keys. (Format same as tx_bits.)
+        self.sifted_keys = {}
+        self.check_bits  = {}
+        self.secret_keys = {}
+        # Track which channels of communication are known to be compromised.
+        self.compromised_chls = []
+        # Fields that don't persist between timesteps.
+        self.tstep_rx_bases = {}  # E.g. {uidA: HAD, uidB: STD}
+        self.tstep_tx_uid = None
+        # Store the entire configuration of the party at each timestep.
+        self.stored_data = {}
+
+    ###########################################################################
+    # UICOMPONENT METHODS
+    ###########################################################################
+
+    def store_timestep_data(self):
+        '''Store the data from this timestep.'''
+        self.stored_data[self.timestep] = {
+            # From quantum device
+            # "total_qubits_generated": self.total_qubits_generated,
+            "total_qubits_transmitted": self.total_qubits_transmitted,
+            "total_qubits_received": self.total_qubits_received,
+            "measure_received_qubits": self.measure_received_qubits,
+            "forward_received_qubits": self.forward_received_qubits,
+            "qubit_forwarding_uid": self.qubit_forwarding_uid,
+            # From classical computer
+            "tx_bases": copy.deepcopy(self.tx_bases),
+            "rx_bases": copy.deepcopy(self.rx_bases),
+            "tx_bits": copy.deepcopy(self.tx_bits),
+            "rx_bits": copy.deepcopy(self.rx_bits),
+            "sifted_keys": copy.deepcopy(self.sifted_keys),
+            "check_bits": copy.deepcopy(self.check_bits),
+            "secret_keys": copy.deepcopy(self.secret_keys),
+            "compromised_chls": copy.deepcopy(self.compromised_chls),
+            "tstep_rx_bases": copy.deepcopy(self.tstep_rx_bases),
+            "tstep_tx_uid": self.tstep_tx_uid,
+        }
+
+    def reset_tstep_fields(self):
+        '''Reset all fields that should not persist past the current timestep.'''
+        self.tstep_rx_bases = {}
+        self.tstep_tx_uid = None
+
+    ###########################################################################
+    # QUANTUM LOGIC
+    ###########################################################################
+
+    def connect_tx_qchl(self, qchl, rx_uid):
+        '''Connect this party to the tx end of the given qchl, which is (believed to be) connected to rx_uid.'''
+        # Connect to the tx end of the qchl.
+        qchl.connect_tx_party(self)
+        # Store the qchl with the UID of the party that it is thought to
+        # connect to (this may be inaccurate if the qchl is intercepted).
+        self.tx_qchls[rx_uid] = qchl
+
+    def connect_rx_qchl(self, qchl, tx_uid):
+        '''Connect this party to the rx end of the given qchl, which is (believed to be) connected to tx_uid.'''
+        # Connect to the rx end of the qchl.
+        qchl.connect_rx_party(self)
+        # Store the qchl with the UID of the party that it is thought to
+        # connect to (this may be inaccurate if the qchl is intercepted).
+        self.rx_qchls[tx_uid] = qchl
+
+    def generate_qubit(self, bit, basis):
+        '''Create a new qubit representing the given bit and basis.'''
+        initial_state = np.linalg.eigh(basis)[1][bit]
+        qubit = state.NQubitState(initial_state)
+        self.total_qubits_generated += 1
+        return qubit
+
+    def measure_qubit(self, qubit_state, basis):
+        '''Measure the state w.r.t. the given basis.'''
+        measured_value = qubit_state.measure(basis)
+        self.total_qubits_measured += 1
+        return measured_value
+
+    def transmit_qubit(self, target_uid, qubit_state):
+        '''Transmit the qubit to the target_uid via a quantum channel.'''
+        if target_uid not in self.tx_qchls:
+            raise KeyError(("Qubit transmission from party {} to party {} "
+                            "failed: the parties are not connected via a "
+                            "quantum channel.").format(self.uid, target_uid))
+
+        self.tx_qchls[target_uid].transmit(qubit_state)
+        self.total_qubits_transmitted += 1
+
+    def send_qubit(self, target_uid, bit, basis):
+        '''Encode the given bit w.r.t. the given basis to generate a new qubit
+        and transmit this qubit to the party with the specified uid.'''
+        # Generate the qubit using the given bit and basis.
+        qubit = self.generate_qubit(bit, basis)
+
+        # Keep a record of the bit and basis used to generate the qubit.
+        self.store_value_in_dict(self.tx_bases, target_uid, basis)
+        self.store_value_in_dict(self.tx_bits, target_uid, bit)
+
+        # Transmit the qubit to the target party.
+        self.transmit_qubit(target_uid, qubit)
+
+    def receive_qubit(self, qubit):
+        '''Handle a received qubit (measure it and/or forward it).'''
+        bit, basis = (None, None)
+        # Measure the qubit.
+        if self.measure_received_qubits:
+            sender_uid = self.tstep_tx_uid
+            basis = self.tstep_rx_bases[sender_uid]
+            self.tstep_rx_bases[sender_uid] = None
+
+            if basis is None:
+                raise TypeError(("The measurement basis is set to None for "
+                                 "Party {} (\"{}\"), so the received qubit "
+                                 "can't be measured.").format(self.uid,
+                                                              self.name))
+
+            bit = self.measure_qubit(qubit, basis)
+
+            # Keep a record of the measurement basis and the measured bit.
+            self.store_value_in_dict(self.rx_bases, sender_uid, basis)
+            self.store_value_in_dict(self.rx_bits, sender_uid, bit)
+
+        # Forward the qubit to the qubit_forwarding_uid.
+        if self.forward_received_qubits:
+            # Store the basis and bit in the dictionary of tx_bases.
+            # Note: If forwarding without measuring, then the basis and the
+            # bit are both stored as None.
+            self.store_value_in_dict(self.tx_bases,
+                                     self.qubit_forwarding_uid,
+                                     basis)
+            self.store_value_in_dict(self.tx_bits,
+                                     self.qubit_forwarding_uid,
+                                     bit)
+            # Forward the qubit to the qubit_forwarding_uid.
+            self.transmit_qubit(self.qubit_forwarding_uid, qubit)
+            self.total_qubits_forwarded += 1
+
+        self.total_qubits_received += 1
+
+    def next_qubit_is_from(self, tx_uid):
+        '''Note that party tx_uid is about to send a qubit to this party.'''
+        self.tstep_tx_uid = tx_uid
+
+    def measure_next_qubit_wrt(self, basis):
+        '''Measure the next qubit from tstep_tx_uid w.r.t. the given basis.'''
+        sender_uid = self.tstep_tx_uid
+        self.tstep_rx_bases[sender_uid] = basis
+        self.measure_received_qubits = True
+
+    def forward_qubits_to(self, uid):
+        '''Forward received qubits to the given UID.'''
+        self.qubit_forwarding_uid = uid
+        self.forward_received_qubits = True
+
+    ###########################################################################
+    # CLASSICAL LOGIC
+    ###########################################################################
 
     def broadcast_tx_bases(self, timestep):
         '''Broadcast the tx_bases on the classical channel.'''
@@ -568,89 +957,126 @@ class Party(UIComponent):
             if not self.secret_keys[timestep]:
                 self.secret_keys.pop(timestep)
 
+    ###########################################################################
+    # OTHER METHODS
+    ###########################################################################
 
-class QuantumChannel(UIComponent):
+    def store_value_in_dict(self, d, key, val):
+        '''Store the key, val pair in dictionary d[self.timestep].'''
+        if self.timestep not in d:
+            d[self.timestep] = {}
+
+        d[self.timestep][key] = val
+
+
+class ClassicalChannel(UIComponent):
 
     def __init__(self):
-        self.tx_party = None
-        self.rx_party = None
-        # self.intercepted_edges = {}
         self.reset()
 
     def reset(self):
-        '''Reset the quantum channel to its configuration at timestep 0.'''
+        '''Reset the classical channel to its configuration at timestep 0.'''
         self.timestep = 0
-        self.tstep_state = None
+        self.tstep_messages = {}
         self.stored_data = {}
-
-    def next_timestep(self):
-        '''Store the data from this timestep and increment the timestep counter.'''
-        # Store the state that was transmitted in this timestep.
-        self.store_timestep_data()
-        # Reset the current state field.
-        self.reset_tstep_fields()
-        # Increment the timestep counter.
-        self.timestep += 1
 
     def store_timestep_data(self):
         '''Store the data from this timestep.'''
-        self.stored_data[self.timestep] = {
-            "state": self.tstep_state
+        self.stored_data = {
+            "tstep_messages": copy.deepcopy(self.tstep_messages)
         }
 
     def reset_tstep_fields(self):
         '''Reset all fields that should not persist past the current timestep.'''
-        self.tstep_state = None
+        self.tstep_messages = {}
 
-    def connect_tx_party(self, party):
-        '''Connect a party to the transmitting end of the quantum channel.'''
-        if self.tx_party is not None:
-            raise ValueError("Transmitting party tx_party is already set.")
-        self.tx_party = party
+    ###########################################################################
+    # MESSAGE PROCESSING METHODS
+    ###########################################################################
 
-    def connect_rx_party(self, party):
-        '''Connect a party to the receiving end of the quantum channel.'''
-        if self.rx_party is not None:
-            raise ValueError("Receiving party rx_party is already set.")
-        self.rx_party = party
+    # TODO make a single, generic message retrieval method
+    # Note that get_tx_bases and get_rx_bases are currently structured slightly
+    # differently from the other message retrieval methods. Is this necessary?
 
-    def disconnect_tx_party(self):
-        '''Disconnect the current tx_party.'''
-        self.tx_party = None
+    def get_tx_bases(self, timestep):
+        '''Retrieve all messages of type "broadcast_tx_bases" for the given timestep.'''
+        tx_bases = {}
+        for tx_uid in self.tstep_messages:
+            for msg in self.tstep_messages[tx_uid]:
+                if msg["type"] == "broadcast_tx_bases":
+                    if msg["timestep"] == timestep:
+                        tx_bases[tx_uid] = msg["data"]
+        return tx_bases
 
-    def disconnect_rx_party(self):
-        '''Disconnect the current rx_party.'''
-        self.rx_party = None
+    def get_rx_bases(self, timestep):
+        '''Retrieve all messages of type "broadcast_rx_bases" for the given timestep.'''
+        rx_bases = {}
+        for rx_uid in self.tstep_messages:
+            for msg in self.tstep_messages[rx_uid]:
+                if msg["type"] == "broadcast_rx_bases":
+                    if msg["timestep"] == timestep:
+                        rx_bases[rx_uid] = msg["data"]
+        return rx_bases
 
-    def send(self, qubit_state):#, sender_uid, target_uid):
-        '''Transmit a qubit state from sender to target via the quantum channel.'''
-        # Save a copy of the qubit state as it is during transmission through
-        # the quantum channel. (This is just so I can display it in the UI -
-        # would not be possible in the real world!)
-        self.tstep_state = state.NQubitState(qubit_state.coefficients)
-        # Pass the qubit to the intended recipient.
-        self.rx_party.receive_qubit(qubit_state)
+    def get_msg_check_bits(self, timestep, sender_uid):
+        '''Retrieve all messages of type "broadcast_check_bits" for the given timestep.'''
+        check_bits = {}
+        if sender_uid in self.tstep_messages:
+            for msg in self.tstep_messages[sender_uid]:
+                if msg["type"] == "broadcast_check_bits":
+                    if msg["timestep"] == timestep:
+                        check_bits = msg["data"]
+        return check_bits
+
+    def get_flip_bit_instructions(self, timestep, sender_uid):
+        '''Retrieve a message from sender_uid of type "broadcast_flip_bit_instructions" for the given timestep.'''
+        flip_bit_instrs = {}
+        if sender_uid in self.tstep_messages:
+            for msg in self.tstep_messages[sender_uid]:
+                if msg["type"] == "broadcast_flip_bit_instructions":
+                    if msg["timestep"] == timestep:
+                        flip_bit_instrs = msg["data"]
+        return flip_bit_instrs
+
+    def get_msg_key_length(self, timestep, sender_uid):
+        key_length = math.inf
+        if sender_uid in self.tstep_messages:
+            for msg in self.tstep_messages[sender_uid]:
+                if msg["type"] == "broadcast_key_length":
+                    if msg["timestep"] == timestep:
+                        key_length = msg["data"]
+        return key_length
+
+    ###########################################################################
+    # CLASSICAL COMMUNICATION METHODS
+    ###########################################################################
+
+    def add_message(self, sender_uid, message):
+        '''Add a message from sender_uid to the classical channel.'''
+        if sender_uid not in self.tstep_messages:
+            self.tstep_messages[sender_uid] = []
+        self.tstep_messages[sender_uid].append(message)
 
 
-class EPRPairSource:
+# class EPRPairSource:
 
-    def __init__(self):
-        self.reset()
+#     def __init__(self):
+#         self.reset()
 
-    def reset(self):
-        self.total_sent = 0
+#     def reset(self):
+#         self.total_sent = 0
 
-    def create_state(self, n=2):
-        initial_state = 1 / math.sqrt(2) * np.array([1] + [0] * (2**n - 2) + [1])
-        return state.NQubitState(initial_state)
+#     def create_state(self, n=2):
+#         initial_state = 1 / math.sqrt(2) * np.array([1] + [0] * (2**n - 2) + [1])
+#         return state.NQubitState(initial_state)
 
-    def send_qubit(self, party0, party1):
-        n_qubit_state = self.create_state()
-        qubit0 = state.EntangledQubit(n_qubit_state, 0)
-        qubit1 = state.EntangledQubit(n_qubit_state, 1)
+#     def send_qubit(self, party0, party1):
+#         n_qubit_state = self.create_state()
+#         qubit0 = state.EntangledQubit(n_qubit_state, 0)
+#         qubit1 = state.EntangledQubit(n_qubit_state, 1)
 
-        self.total_sent += 1
+#         self.total_sent += 1
 
-        party0.receive_qubit(qubit0)
-        party1.receive_qubit(qubit1)
+#         party0.receive_qubit(qubit0)
+#         party1.receive_qubit(qubit1)
 

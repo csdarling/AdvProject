@@ -1,4 +1,5 @@
 import numpy as np
+from math import sqrt
 
-STANDARD_BASIS = np.array([[0, 0], [0, 1]])
-HADAMARD_BASIS = np.array([[1, -1], [-1, 1]]) * 1 / 2
+STD_BASIS = np.eye(2)
+HAD_BASIS = (1 / sqrt(2)) * np.array([[1, 1], [1, -1]])

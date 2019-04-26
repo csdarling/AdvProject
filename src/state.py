@@ -32,9 +32,9 @@ class NQubitState:
         self.coefficients = coefficients
 
         # Create the qubits that constitute the state.
-        self.num_qubits = int(math.log(coefficients.size, 2))
+        self.n = int(math.log(coefficients.size, 2))
         qubits = []
-        for i in range(self.num_qubits):
+        for i in range(self.n):
             qubit = Qubit(self, i)
             qubits.append(qubit)
 
@@ -69,6 +69,14 @@ class NQubitState:
                 count += 1
 
         return coeffs_string
+
+    def get_num_qubits(self):
+        '''Get the number of qubits in the state.'''
+        return self.n
+
+    def split_into_qubits(self):
+        '''Retrieve all the qubits that constitute the state.'''
+        return self.qubits
 
     def get_qubit(self, position):
         '''Retrieve the qubit at the specified position.'''
@@ -149,17 +157,17 @@ class Qubit:
                              "be an integer.").format(type(position)))
 
         # Check that the position is within the valid range of values.
-        num_qubits = self.state.num_qubits
-        if position < 0 or position > num_qubits - 1:
+        n = self.state.get_num_qubits()
+        if position < 0 or position > n - 1:
             raise ValueError(("The given position ({}) is outside the valid "
                               "range [0, {}].").format(position,
-                                                       num_qubits - 1))
+                                                       n - 1))
 
         self.position = position
 
     def measure(self, operator):
         '''Measure a single qubit of a multi-qubit state.'''
-        n = self.state.num_qubits
+        n = self.state.get_num_qubits()
         pos = self.position
 
         # Measurement of a single qubit of the state can only result in a bit,

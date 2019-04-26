@@ -10,56 +10,21 @@ import components
 import shared_fns
 import consts
 
-from pprint import pprint
-
 party_names = string.ascii_uppercase[:4] + string.ascii_uppercase[5:]
 
-# class UIComponent:
 
-#     def __init__(self):
-#         self.reset()
-#         self.ui_in_replay_mode = True
+class QKDProtocol:
 
-#     def reset(self):
-#         self.ui_timestep = 0
-#         self.ui_stored_data = {}
-
-#     def ui_tick(self, data={}):
-#         '''Store the data and progress to the next timestep.'''
-#         if not self.ui_in_replay_mode:
-#             self.ui_stored_data[self.ui_timestep] = data
-
-#         next_timestep = self.ui_timestep + 1
-#         if next_timestep not in self.ui_stored_data:
-#             self.log[next_timestep] = {}
-#             self.ui_in_replay_mode = False
-
-#         self.ui_timestep += 1
-
-#     def ui_toggle_replay(self):
-#         self.ui_in_replay_mode = not self.ui_in_replay_mode
-
-#     def ui_rewind_to_timestep(self, timestep):
-#         if timestep in self.ui_stored_data:
-#             # If not in replay mode, then only keep the stored data up to the
-#             # specified timestep.
-#             if not self.ui_in_replay_mode:
-#                 ui_stored_data = {}
-#                 for t in range(timestep):
-#                     ui_stored_data[t] = self.ui_stored_data[t]
-#                 self.ui_stored_data = ui_stored_data
-#             self.ui_timestep = timestep
-
-
-class KPartyBB84:
-
-    def __init__(self, k=None, edges=None, protocol=2, animation=True, check_bit_prob=0.2):
+    def __init__(self, k=None, edges=None, protocol=0, animation=True, check_bit_prob=0.2):
         self.cchl = components.ClassicalChannel()
         self.set_protocol(protocol, k, edges, animation, check_bit_prob)
+        self.eavesdropping = False
 
     def reset(self):
         '''Reset the protocol to its configuration at timestep 0.'''
         self.timestep = 0
+        self.num_iterations = 0
+        self.security = 0.0
         self.cchl.reset()
         self.network_manager.reset()
         self.protocol_secure = True
@@ -67,30 +32,38 @@ class KPartyBB84:
 
     def set_protocol(self, protocol, k=None, edges=None, animation=True, check_bit_prob=0.2):
         '''Set the protocol to run when run_one_step or run_n_steps is called.'''
-        if k is None and edges is None:
+        if protocol == 0:
+            self.protocol = self.bb84
+            edges = [(0, 1)]
+
+        elif protocol == 1:
+            self.protocol = self.bbm92
+            edges = [(0, 1)]
+
+        elif k is None and edges is None:
             # TODO Raise a more precise type of exception.
             raise Exception("Either k or edges must be specified.")
 
         # If k is not set then it defaults to the maximum node uid in edges.
-        if k is None:
+        elif k is None:
             k = max([max((a, b) for a, b in edges)])
 
         # Chained BB84 Protocol
-        if protocol == 0:
+        elif protocol == 2:
             self.protocol = self.chained_protocol
             # If edges has not been specified, then set it to default chain.
             if edges is None:
                 edges = [(i, i + 1) for i in range(k - 1)]
 
         # Star Graph BB84 Protocol 1
-        elif protocol == 1:
+        elif protocol == 3:
             self.protocol = self.star_graph_protocol_1
             # If edges has not been specified, then set it to default star.
             if edges is None:
                 edges = [(0, i + 1) for i in range(k - 1)]
 
         # Star Graph BB84 Protocol 2
-        elif protocol == 2:
+        elif protocol == 4:
             self.protocol = self.star_graph_protocol_2
             # If edges has not been specified, then set it to default star.
             if edges is None:
@@ -98,9 +71,11 @@ class KPartyBB84:
 
         else:
             raise ValueError(("Protocol {} does not exist. Valid protocols:\n"
-                              "  0: Chained BB84\n"
-                              "  1: Star Graph BB84 (Protocol 1)\n"
-                              "  2: Star Graph BB84 (Protocol 2)"
+                              "  0: 2-party BB84\n"
+                              "  1: 2-party BBM92\n"
+                              "  2: Chained BB84\n"
+                              "  3: Star Graph BB84 (Protocol 1)\n"
+                              "  4: Star Graph BB84 (Protocol 2)"
                               ).format(protocol))
 
         self.network_manager = NetworkManager(self.cchl, edges)
@@ -108,11 +83,21 @@ class KPartyBB84:
                                 "check_bit_prob": check_bit_prob}
         self.reset()
 
+    def add_eavesdropping(self, edges):
+        '''Add eavesdropping to the specified edges.'''
+        self.network_manager.intercept_edges(edges, self.cchl)
+        self.eavesdropping = True
+
     def next_timestep(self):
         '''Store the data from this timestep and set up for the next timestep.'''
         self.cchl.next_timestep()
         self.network_manager.next_timestep()
         self.timestep += 1
+
+    def store_timestep_data(self):
+        '''Store the data from this timestep.'''
+        self.cchl.store_timestep_data()
+        self.network_manager.store_timestep_data()
 
     def get_stored_data_for_timestep(self, timestep):
         '''Retrieve all of the stored data for a given timestep.'''
@@ -122,6 +107,114 @@ class KPartyBB84:
             "qchls": self.network_manager.get_qchl_stored_data_for_timestep(timestep)
         }
         return stored_data
+
+    def bb84(self, animation=True, check_bit_prob=0.2):
+        '''Run 2-party BB84.'''
+        protocol_secure = True
+        alice = self.network_manager.get_party(0)
+        bob = self.network_manager.get_party(1)
+
+        eve = None
+        if self.eavesdropping:
+            eve = self.network_manager.get_party(2)
+
+        valid_bits = [0, 1]
+        valid_bases = [consts.STD_BASIS, consts.HAD_BASIS]
+
+        # Bob randomly picks a basis.
+        # bob.choose_rx_basis(valid_bases)
+        bob_basis = bob.choose_from(valid_bases)
+        bob.expect_tx_from(alice.uid)
+        bob.measure_wrt(bob_basis)
+
+        eve_basis = None
+        if self.eavesdropping:
+            # eve.choose_rx_basis(valid_bases)
+            eve_basis = eve.choose_from(valid_bases)
+            eve.expect_tx_from(alice.uid)
+            eve.measure_wrt(eve_basis)
+            eve.forward_qubits_to(bob.uid)
+
+        # Alice randomly picks a bit and basis
+        # alice.choose_tx_bit(valid_bits)
+        # alice.choose_tx_basis(valid_bases)
+        bit = alice.choose_from(valid_bits)
+        alice_basis = alice.choose_from(valid_bases)
+        alice.send_state(bit, alice_basis, bob.uid)
+
+        # Alice and Bob publicly announce their bases.
+        alice.broadcast_tx_bases(self.timestep)
+        bob.broadcast_rx_bases(self.timestep)
+
+
+        # alice.compare_bases(bob.uid)
+        # bob.compare_bases(alice.uid)
+        # if self.eavesdropping:
+        #     eve.compare_bases(alice.uid, bob.uid)
+
+
+        # Retrieve the bases.
+        tx_bases = self.cchl.get_tx_bases(self.timestep)
+        rx_bases = self.cchl.get_rx_bases(self.timestep)
+
+        # Check whether Alice and Bob used the same basis.
+        bases_match = False
+        if np.allclose(rx_bases[bob.uid][alice.uid], tx_bases[alice.uid][bob.uid]):
+            bases_match = True
+
+        # If all the bases match, then add the bit to the sifted key.
+        if bases_match:
+            alice.add_all_bits_to_keys()
+            bob.add_all_bits_to_keys()
+
+            if self.eavesdropping:
+                eve.add_all_bits_to_keys()
+
+            # If running as an animation, then the sifted key bits from this
+            # timestep are used as check bits with probability check_bit_prob.
+            if animation:
+                random_num = random.random()
+                if random_num < check_bit_prob:
+                    # Add the current bit to the check bits.
+                    alice.add_check_bit(bob.uid)
+                    bob.add_check_bit(alice.uid)
+
+                    if self.eavesdropping:
+                        eve.add_check_bit(alice.uid)
+                        eve.add_check_bit(bob.uid)
+
+                    # Each party broadcasts all of their check bits and tests
+                    # for eavesdropping.
+                    alice.broadcast_check_bits()
+                    bob.receive_check_bits(alice.uid)
+                    bob.broadcast_check_bits()
+                    alice.receive_check_bits(bob.uid)
+
+                    # If the party detects eavesdropping on any channel,
+                    # then abort the run of the protocol.
+                    if alice.compromised_chls or bob.compromised_chls:
+                        print("\nEavesdropping detected!\n")
+                        protocol_secure = False
+                        return protocol_secure
+
+        # Remove all check bits from the secret keys.
+        alice.synch_sifted_and_secret_keys()
+        alice.remove_check_bits_from_secret_keys()
+        bob.synch_sifted_and_secret_keys()
+        bob.remove_check_bits_from_secret_keys()
+
+        if self.eavesdropping:
+            eve.synch_sifted_and_secret_keys()
+            eve.remove_check_bits_from_secret_keys()
+
+        return protocol_secure
+
+    def bbm92(self, animation=True, check_bit_prob=0.2):
+        '''Run 2-party BBM92.'''
+        alice = self.network_manager.get_party(0)
+        bob = self.network_manager.get_party(1)
+
+        # TODO
 
     def chained_protocol(self, animation=True, check_bit_prob=0.2):
         '''Run the chained BB84 protocol.'''
@@ -149,8 +242,8 @@ class KPartyBB84:
         for uid in parties:
             if uid != first_party_uid:
                 # Choose randomly between the standard and Hadamard bases.
-                basis = random.choice([consts.STANDARD_BASIS,
-                                       consts.HADAMARD_BASIS])
+                basis = random.choice([consts.STD_BASIS,
+                                       consts.HAD_BASIS])
                 # Record that the next qubit received by this party should be
                 # measured w.r.t. this basis.
                 predecessor_uid = self.network_manager.get_predecessors(uid)[0]
@@ -166,14 +259,18 @@ class KPartyBB84:
         # The first party in the chain generates a qubit using a random bit
         # and a random basis, and transmits it to the next party in the chain.
         first_party = parties[first_party_uid]
-        bit = random.choice([0, 1])
-        basis = random.choice([consts.STANDARD_BASIS, consts.HADAMARD_BASIS])
         successors = self.network_manager.get_successors(first_party_uid)
         if not successors:
             # TODO Raise a more precise type of exception.
             raise Exception("The first party in the chain doesn't have a successor.")
         successor_uid = successors[0]
-        first_party.send_qubit(successor_uid, bit, basis)
+
+        bit = random.choice([0, 1])
+        basis = random.choice([consts.STD_BASIS, consts.HAD_BASIS])
+        # first_party.send_qubit(successor_uid, bit, basis)
+        coeffs = basis[bit]
+        state = first_party.generate_state(coeffs)
+        first_party.transmit(state, successor_uid)
 
         # Each party publicly announces the basis it used.
         first_party.broadcast_tx_bases(self.timestep)
@@ -272,8 +369,8 @@ class KPartyBB84:
         # (i.e. every party except the leader).
         for uid in parties:
             if uid != leader_uid:
-                basis = random.choice([consts.STANDARD_BASIS,
-                                       consts.HADAMARD_BASIS])
+                basis = random.choice([consts.STD_BASIS,
+                                       consts.HAD_BASIS])
                 parties[uid].next_qubit_is_from(leader_uid)
                 parties[uid].measure_next_qubit_wrt(basis)
 
@@ -283,9 +380,12 @@ class KPartyBB84:
         successors = self.network_manager.get_successors(leader_uid)
         for successor_uid in successors:
             bit = random.choice([0, 1])
-            basis = random.choice([consts.STANDARD_BASIS,
-                                   consts.HADAMARD_BASIS])
-            leader.send_qubit(successor_uid, bit, basis)
+            basis = random.choice([consts.STD_BASIS,
+                                   consts.HAD_BASIS])
+            # leader.send_qubit(successor_uid, bit, basis)
+            coeffs = basis[bit]
+            state = leader.generate_state(coeffs)
+            leader.transmit(state, successor_uid)
 
         # Each party publicly announces the basis it used.
         leader.broadcast_tx_bases(self.timestep)
@@ -376,8 +476,8 @@ class KPartyBB84:
         # (i.e. every party except the leader).
         for uid in parties:
             if uid != leader_uid:
-                basis = random.choice([consts.STANDARD_BASIS,
-                                       consts.HADAMARD_BASIS])
+                basis = random.choice([consts.STD_BASIS,
+                                       consts.HAD_BASIS])
                 parties[uid].next_qubit_is_from(leader_uid)
                 parties[uid].measure_next_qubit_wrt(basis)
 
@@ -385,11 +485,14 @@ class KPartyBB84:
         # parties using different random bits and bases.
         leader = parties[leader_uid]
         successors = self.network_manager.get_successors(leader_uid)
-        for uid in successors:
+        for successor_uid in successors:
             bit = random.choice([0, 1])
-            basis = random.choice([consts.STANDARD_BASIS,
-                                   consts.HADAMARD_BASIS])
-            leader.send_qubit(uid, bit, basis)
+            basis = random.choice([consts.STD_BASIS,
+                                   consts.HAD_BASIS])
+            # leader.send_qubit(successor_uid, bit, basis)
+            coeffs = basis[bit]
+            state = leader.generate_state(coeffs)
+            leader.transmit(state, successor_uid)
 
         # Each party publicly announces the basis it used.
         leader.broadcast_tx_bases(self.timestep)
@@ -470,17 +573,22 @@ class KPartyBB84:
             # Optionally print the data to the terminal.
             if display_data:
                 self.display_data()
-            # Increment all of the timestep counters.
+            # Setup for the next timestep.
             if self.protocol_secure:
                 self.next_timestep()
+            else:
+                self.store_timestep_data()
+            # Increment the iteration counter.
+            self.num_iterations += 1
 
     def run_n_steps(self, n, display_bits=True):
         '''Run n iterations of the protocol.'''
-        count = 0
-        while self.protocol_secure and count < n:
-            self.run_one_step(display_data=False)
-            count += 1
-        self.display_data(display_bits)
+        if self.protocol_secure:
+            count = 0
+            while self.protocol_secure and count < n:
+                self.run_one_step(display_data=False)
+                count += 1
+            self.display_data(display_bits)
 
     def run(self):
         pass
@@ -494,27 +602,27 @@ class KPartyBB84:
 
         :return: a tuple of the three qubit totals
         '''
-        total_qubits_generated = 0
-        total_qubits_transmitted = 0
-        total_qubits_received = 0
+        total_qstates_generated = 0
+        total_qstates_transmitted = 0
+        total_qstates_received = 0
 
         parties = self.network_manager.get_parties()
         for party_uid in parties:
             party = parties[party_uid]
-            total_qubits_generated += party.total_qubits_generated
-            total_qubits_transmitted += party.total_qubits_transmitted
-            total_qubits_received += party.total_qubits_received
+            total_qstates_generated += party.total_qstates_generated
+            total_qstates_transmitted += party.total_qstates_transmitted
+            total_qstates_received += party.total_qstates_received
 
-        return (total_qubits_generated,
-                total_qubits_transmitted,
-                total_qubits_received)
+        return (total_qstates_generated,
+                total_qstates_transmitted,
+                total_qstates_received)
 
     def display_data(self, display_bits=True):
         '''Print the protocol data to the terminal.'''
         parties = self.network_manager.get_parties()
         qubit_counts = self.calculate_qubit_counts()
 
-        print("Protocol iterations: {}".format(self.timestep))
+        print("Protocol iterations: {}".format(self.num_iterations))
         print("Generated qubits:    {}".format(qubit_counts[0]))
         print("Transmitted qubits:  {}".format(qubit_counts[1]))
         print("Received qubits:     {}".format(qubit_counts[2]))
@@ -648,17 +756,12 @@ class NetworkManager:
         # Create a quantum channel for every edge in the network.
         qchls = {}
         for edge in network.edges:
-            qchl = components.QuantumChannel()
             tx_uid, rx_uid = edge
             tx_party = parties[tx_uid]
             rx_party = parties[rx_uid]
-
-            # qchl.add_socket(u_uid, party_u.socket)
-            # qchl.add_socket(v_uid, party_v.socket)
-
+            qchl = components.QuantumChannel()
             tx_party.connect_tx_qchl(qchl, rx_uid)
             rx_party.connect_rx_qchl(qchl, tx_uid)
-
             qchls[edge] = qchl
 
         # Store the parties as nodes and the qchls as edges.
@@ -668,6 +771,8 @@ class NetworkManager:
         self.network = network
         self.parties = nx.get_node_attributes(self.network, "party")
         self.qchls = nx.get_edge_attributes(self.network, "qchl")
+
+        self.intercepted_edges = {}
         self.reset()
 
     def reset(self):
@@ -692,6 +797,15 @@ class NetworkManager:
         # Increment the network manager's timestep counter.
         self.timestep += 1
 
+    def store_timestep_data(self):
+        '''Store the data from this timestep.'''
+        # Store the data for all the parties in the network.
+        for uid in self.parties:
+            self.parties[uid].store_timestep_data()
+        # Store the data for all the qchls in the network.
+        for uid in self.qchls:
+            self.qchls[uid].store_timestep_data()
+
     def get_successors(self, party_uid):
         return list(self.network.successors(party_uid))
 
@@ -712,6 +826,55 @@ class NetworkManager:
 
     def get_qchl(self, qchl_uid):
         return self.qchls[qchl_uid]
+
+    def intercept_edges(self, intercepted_edges, cchl):
+        '''Add an eavesdropping party to the given edges.'''
+        eve_uid = max([uid for uid in self.parties]) + 1
+        qchls = {}
+
+        for edge in self.qchls:
+            if edge in intercepted_edges:
+                tx_uid, rx_uid = edge
+                rx_party = self.parties[rx_uid]
+
+                # Create a new eavesdropping party.
+                eve = components.Party(eve_uid, "E",
+                                       self, cchl, is_eve=True)
+                eve.next_timestep()  # TODO change this to:
+                                     # eve.set_timestep(self.timestep)
+                self.parties[eve_uid] = eve
+
+                # Redirect the existing channel to this party.
+                existing_qchl = self.get_qchl(edge)
+                existing_qchl.disconnect_rx_device()
+                eve.connect_rx_qchl(existing_qchl, tx_uid)
+                existing_qchl.intercepted = True
+
+                # Add a new channel from Eve to the rx party.
+                new_qchl = components.QuantumChannel()
+                new_qchl.next_timestep()  # TODO Change this to:
+                                          # new_qchl.set_timestep(self.timestep)
+                eve.connect_tx_qchl(new_qchl, rx_uid)
+                rx_party.connect_rx_qchl(new_qchl, tx_uid)
+
+                # Record both qchls in the new dictionary of qchls.
+                qchls[(tx_uid, eve_uid)] = existing_qchl
+                qchls[(eve_uid, rx_uid)] = new_qchl
+
+                # Remove the old edge from the network and add the new ones.
+                self.network.remove_edge(tx_uid, rx_uid)
+                self.network.add_edge(tx_uid, eve_uid)
+                self.network.add_edge(eve_uid, rx_uid)
+
+                # The next eavesdropping party should have a different UID.
+                eve_uid += 1
+            else:
+                qchls[edge] = self.qchls[edge]
+
+        nx.set_node_attributes(self.network, self.parties, "party")
+        nx.set_edge_attributes(self.network, qchls, "qchl")
+        self.qchls = qchls
+        self.intercepted_edges = intercepted_edges
 
     ###########################################################################
     # UI STORED DATA RETRIEVAL METHODS
