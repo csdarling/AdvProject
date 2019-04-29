@@ -7,6 +7,7 @@ import copy
 
 import shared_fns
 import state
+import consts
 
 
 class UIComponent:
@@ -33,6 +34,7 @@ class QuantumChannel(UIComponent):
     def __init__(self):
         self.tx_device = None
         self.rx_device = None
+        self.rx_device_socket_id = None
         self.intercepted = False
         self.reset()
 
@@ -67,11 +69,12 @@ class QuantumChannel(UIComponent):
             raise ValueError("Transmitting party tx_device is already set.")
         self.tx_device = party
 
-    def connect_rx_device(self, party):
+    def connect_rx_device(self, party, socket_id):
         '''Connect a party to the receiving end of the quantum channel.'''
         if self.rx_device is not None:
             raise ValueError("Receiving party rx_device is already set.")
         self.rx_device = party
+        self.rx_device_socket_id = socket_id
 
     def disconnect_tx_device(self):
         '''Disconnect the current tx_device.'''
@@ -80,6 +83,11 @@ class QuantumChannel(UIComponent):
     def disconnect_rx_device(self):
         '''Disconnect the current rx_device.'''
         self.rx_device = None
+        self.rx_device_socket_id = None
+
+    def get_rx_device_socket_id(self):
+        '''Retrieve the ID of the socket that the rx end of this qchl is connected to.'''
+        return self.rx_device_socket_id
 
     def transmit(self, quantum_state):
         '''Transmit a quantum state from sender to target via the quantum channel.'''
@@ -92,16 +100,17 @@ class QuantumChannel(UIComponent):
         # would not be possible in the real world!)
         self.tstep_state = state.NQubitState(quantum_state.coefficients)
         # Pass the quantum state to the intended recipient.
-        # self.rx_device.receive_qubit(quantum_state)
-        self.rx_device.receive(quantum_state)
+        if self.rx_device is not None:
+            self.rx_device.receive(quantum_state, self.rx_device_socket_id)
 
 
-class QKDDevice:
+class QuantumDevice:
 
     def __init__(self, uid):
         self.uid = uid
-        self.tx_qchls = {}
-        self.rx_qchls = {}
+        self.tx_sockets = {}
+        self.rx_sockets = {}
+        self.rx_actions = {}
 
     def connect_tx_qchl(self, qchl, rx_uid):
         '''Connect this device to the tx end of the given qchl, which is (believed to be) connected to rx_uid.'''
@@ -109,30 +118,28 @@ class QKDDevice:
         qchl.connect_tx_device(self)
         # Store the qchl with the UID of the device that it is thought to
         # connect to (this may be inaccurate if the qchl is intercepted).
-        self.tx_qchls[rx_uid] = qchl
+        self.tx_sockets[rx_uid] = qchl
 
-    def connect_rx_qchl(self, qchl, tx_uid):
+    def connect_rx_qchl(self, qchl, tx_uid, actions=None):
         '''Connect this device to the rx end of the given qchl, which is (believed to be) connected to tx_uid.'''
         # Connect to the rx end of the qchl.
-        qchl.connect_rx_device(self)
+        qchl.connect_rx_device(self, tx_uid)
         # Store the qchl with the UID of the device that it is thought to
         # connect to (this may be inaccurate if the qchl is intercepted).
-        self.rx_qchls[tx_uid] = qchl
+        self.rx_sockets[tx_uid] = qchl
+        # Configure the default action that should be carried out when a state
+        # is received at this socket.
+        self.rx_actions[tx_uid] = {
+            "measure": True,
+            "meas_basis": consts.STD_BASIS,
+            "forward": False,
+            "forward_id": None  # Socket ID
+        }
+        if actions is not None:
+            self.rx_actions[tx_uid] = actions
 
-    def next_qubit_is_from(self, tx_uid):
-        '''Note that device tx_uid is about to send a qubit to this device.'''
-        self.tstep_tx_uid = tx_uid
-
-    def measure_next_qubit_wrt(self, basis):
-        '''Measure the next qubit from tstep_tx_uid w.r.t. the given basis.'''
-        sender_uid = self.tstep_tx_uid
-        self.tstep_rx_bases[sender_uid] = basis
-        self.measure_received_qstates = True
-
-    def forward_qubits_to(self, uid):
-        '''Forward received qubits to the given UID.'''
-        self.qstate_forwarding_uid = uid
-        self.forward_received_qstates = True
+    def update_rx_action(self, socket_id, action, value):
+        self.rx_actions[socket_id][action] = value
 
     def generate_state(self, coeffs):
         '''Create a new state with the given coefficients.'''
@@ -149,57 +156,31 @@ class QKDDevice:
 
     def transmit(self, quantum_state, rx_uid):
         '''Transmit the quantum state to rx_uid via a quantum channel.'''
-        if rx_uid not in self.tx_qchls:
+        if rx_uid not in self.tx_sockets:
             raise KeyError(("Transmission from QKD device {} to QKD device {}"
                             " failed: the devices are not connected via a "
                             "quantum channel.").format(self.uid, rx_uid))
 
-        self.tx_qchls[rx_uid].transmit(quantum_state)
+        self.tx_sockets[rx_uid].transmit(quantum_state)
 
-    def receive(self, quantum_state):
-        '''Handle a received quantum state.'''
-        pass
-
-    def receive_qubit_TODO_old(self, qubit):
-        '''Handle a received qubit (measure it and/or forward it).'''
-        bit, basis = (None, None)
-        # Measure the qubit.
-        if self.measure_received_qubits:
-            sender_uid = self.tstep_tx_uid
-            basis = self.tstep_rx_bases[sender_uid]
-            self.tstep_rx_bases[sender_uid] = None
-
-            if basis is None:
-                raise TypeError(("The measurement basis is set to None for "
-                                 "Party {} (\"{}\"), so the received qubit "
-                                 "can't be measured.").format(self.uid,
-                                                              self.name))
-
-            bit = self.measure_qubit(qubit, basis)
-
-            # Keep a record of the measurement basis and the measured bit.
-            self.store_value_in_dict(self.rx_bases, sender_uid, basis)
-            self.store_value_in_dict(self.rx_bits, sender_uid, bit)
-
-        # Forward the qubit to the qubit_forwarding_uid.
-        if self.forward_received_qubits:
-            # Store the basis and bit in the dictionary of tx_bases.
-            # Note: If forwarding without measuring, then the basis and the
-            # bit are both stored as None.
-            self.store_value_in_dict(self.tx_bases,
-                                     self.qubit_forwarding_uid,
-                                     basis)
-            self.store_value_in_dict(self.tx_bits,
-                                     self.qubit_forwarding_uid,
-                                     bit)
-            # Forward the qubit to the qubit_forwarding_uid.
-            self.transmit_qubit(self.qubit_forwarding_uid, qubit)
-            self.total_qubits_forwarded += 1
-
-        self.total_qubits_received += 1
+    def receive(self, quantum_state, tx_uid):
+        '''Receive a quantum state from the specified quantum channel.'''
+        # Check that the socket ID is valid.
+        if tx_uid not in self.rx_sockets:
+            raise ValueError(("Quantum device {} received a quantum state "
+                              "with an invalid socket ID."
+                              ).format(self.uid))
+        # Execute the actions that are configured for the socket ID
+        # (i.e. measure and/or forward the state, or discard it).
+        if self.rx_actions[tx_uid]["measure"]:
+            meas_basis = self.rx_actions[tx_uid]["meas_basis"]
+            self.measure(quantum_state, meas_basis)
+        if self.rx_actions[tx_uid]["forward"]:
+            forward_id = self.rx_actions[tx_uid]["forward_id"]
+            self.transmit(quantum_state, forward_id)
 
 
-class Party(QKDDevice, UIComponent):
+class Party(QuantumDevice, UIComponent):
 
     def __init__(self, uid, name, network_manager, cchl, is_eve=False):
         super().__init__(uid)
@@ -284,7 +265,6 @@ class Party(QKDDevice, UIComponent):
         return random.choice(options)
 
 
-
     def generate_state(self, coeffs):
         '''Create a new state with the given coefficients.'''
         state = super().generate_state(coeffs)
@@ -315,9 +295,7 @@ class Party(QKDDevice, UIComponent):
         self.total_qstates_measured += 1
         return measured_value
 
-
-
-    def receive(self, qstate):
+    def receive(self, qstate, tx_uid):
         '''Handle a received quantum state (measure it and/or forward it).'''
         bit, basis = (None, None)
         # Measure the quantum state.
@@ -340,21 +318,27 @@ class Party(QKDDevice, UIComponent):
             self.store_value_in_dict(self.rx_bits, sender_uid, bit)
 
         # Forward the quantum state to the qstate_forwarding_uid.
-        if self.forward_received_qstates:
+        # if self.forward_received_qstates:
+        if self.rx_actions[tx_uid]["forward"]:
             # Store the basis and bit in the dictionary of tx_bases.
             # Note: If forwarding without measuring, then the basis and the
             # bit are both stored as None.
+            forward_id = self.rx_actions[tx_uid]["forward_id"]
             self.store_value_in_dict(self.tx_bases,
-                                     self.qstate_forwarding_uid,
+                                     # self.qstate_forwarding_uid,
+                                     forward_id,
                                      basis)
             self.store_value_in_dict(self.tx_bits,
-                                     self.qstate_forwarding_uid,
+                                     # self.qstate_forwarding_uid,
+                                     forward_id,
                                      bit)
             # Forward the quantum state to the qstate_forwarding_uid.
-            self.transmit(qstate, self.qstate_forwarding_uid)
+            # self.transmit(qstate, self.qstate_forwarding_uid)
+            self.transmit(qstate, forward_id)
             self.total_qstates_forwarded += 1
 
         self.total_qstates_received += 1
+
 
     def expect_tx_from(self, tx_uid):
         '''Note that tx_uid is about to send a quantum state to this party.'''
@@ -496,7 +480,7 @@ class Party(QKDDevice, UIComponent):
             self.compromised_chls.append(sender_uid)
 
 
-class PartyTODODelete(UIComponent, QKDDevice):
+class PartyTODODelete(UIComponent, QuantumDevice):
 
     def __init__(self, uid, name, network_manager, cchl, is_eve=False):
         self.uid = uid

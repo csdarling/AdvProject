@@ -13,10 +13,12 @@ class UI:
 
     def __init__(self):
         self.title = ""
-        self.num_timesteps = 50
         self.k = None
         self.edges = None
         self.protocol_id = 0
+        self.num_iterations = None
+        self.security = 0.95
+        self.key_length = 128
         self.check_bit_prob = 0.2
         self.intercepted_edges = []
         self.ui_timestep = 0
@@ -37,12 +39,9 @@ class UI:
         plt.show()
 
     def run_protocol(self):
-        self.protocol = kpp.QKDProtocol(k=self.k, edges=self.edges,
-                                        protocol=self.protocol_id,
-                                        check_bit_prob=self.check_bit_prob)
-        if self.intercepted_edges:
-            self.protocol.add_eavesdropping(self.intercepted_edges)
-        self.protocol.run_n_steps(self.num_timesteps)
+        self.protocol.run(num_iterations=self.num_iterations,
+                          security=self.security,
+                          key_length=self.key_length)
 
     def setup_plot(self):
 
@@ -67,7 +66,7 @@ class UI:
         for side in ax.spines:
             ax.spines[side].set_color(spine_colour)
 
-        text = AnchoredText("TODO keys\n", loc=2,  # Upper left
+        text = AnchoredText("Key bits", loc=2,  # Upper left
                             prop=dict(fontfamily="monospace",
                                       wrap=True,
                                       bbox=dict(facecolor='w',
@@ -81,7 +80,7 @@ class UI:
         for side in ax.spines:
             ax.spines[side].set_color(spine_colour)
 
-        text = AnchoredText("TODO classical msgs here\n", loc=2,  # Upper left
+        text = AnchoredText("Classical messages", loc=2,  # Upper left
                             prop=dict(fontfamily="monospace",
                                       bbox=dict(facecolor='w',
                                                 edgecolor="none")))
