@@ -5,8 +5,6 @@ import components
 
 class NetworkManager:
 
-
-
     def __init__(self, cchl, edges):
         if not edges:
             raise ValueError("The network must have at least one edge.")

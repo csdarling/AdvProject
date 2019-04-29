@@ -1,5 +1,5 @@
 import networkx as nx
-import k_party_protocol as kpp
+import qkd_protocols as qkd
 from user_interface import UI
 
 
@@ -8,7 +8,7 @@ class BB84(UI):
     def __init__(self):
         super().__init__()
         self.title = "2-party BB84"
-        self.protocol = kpp.BB84()
+        self.protocol = qkd.BB84()
         self.security = 0.95
         self.key_length = 128
         self.check_bit_prob = 0.2
@@ -20,7 +20,7 @@ class BB84WithEavesdropping(UI):
     def __init__(self):
         super().__init__()
         self.title = "2-party BB84 with eavesdropping"
-        self.protocol = kpp.BB84(eavesdropping=True)
+        self.protocol = qkd.BB84(eavesdropping=True)
         self.security = 0.95
         self.key_length = 128
         self.check_bit_prob = 0.2

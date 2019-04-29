@@ -5,7 +5,6 @@ from matplotlib.widgets import Slider, Button, RadioButtons
 from matplotlib.offsetbox import AnchoredText
 from matplotlib.patches import Rectangle
 
-import k_party_protocol as kpp
 import shared_fns
 
 
