@@ -117,8 +117,9 @@ class NetworkManager:
                 existing_qchl = self.get_qchl(edge)
                 existing_qchl.disconnect_rx_device()
                 eve.connect_rx_qchl(existing_qchl, tx_uid)
-                eve.update_rx_action(tx_uid, "forward", True)
-                eve.update_rx_action(tx_uid, "forward_id", rx_uid)
+                eve.forward(tx_uid, rx_uid)
+                # eve.update_rx_action(tx_uid, "forward", True)
+                # eve.update_rx_action(tx_uid, "forward_uid", rx_uid)
                 existing_qchl.intercepted = True
 
                 # Add a new channel from Eve to the rx party.

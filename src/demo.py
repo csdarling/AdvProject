@@ -50,6 +50,17 @@ class BBM92WithEavesdropping(UI):
         self.intercepted_edges = [(0, 1)]
 
 
+class ChainedBB84(UI):
+
+    def __init__(self):
+        super().__init__()
+        self.title = "Chained BB84"
+        self.protocol = qkd.ChainedBB84(4)
+        self.security = 0.95
+        self.key_length = 32
+        self.check_bit_prob = 0.2
+
+
 def main():
     bb84_ui = BB84()
     bb84_ui.show()
@@ -57,11 +68,8 @@ def main():
     bb84_with_eavesdropping_ui = BB84WithEavesdropping()
     bb84_with_eavesdropping_ui.show()
 
-    bbm92_ui = BBM92()
-    # bbm92_ui.show()
-
-    bbm92_with_eavesdropping_ui = BBM92WithEavesdropping()
-    # bbm92_with_eavesdropping_ui.show()
+    chained_bb84 = ChainedBB84()
+    chained_bb84.show()
 
 
 if __name__ == '__main__':

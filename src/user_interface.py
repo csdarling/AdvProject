@@ -64,13 +64,7 @@ class UI:
         ax.get_yaxis().set_visible(False)
         for side in ax.spines:
             ax.spines[side].set_color(spine_colour)
-
-        text = AnchoredText("Key bits", loc=2,  # Upper left
-                            prop=dict(fontfamily="monospace",
-                                      wrap=True,
-                                      bbox=dict(facecolor='w',
-                                                edgecolor="none")))
-        ax.add_artist(text)
+        self.keys_ax = ax
 
         # Display the messages from the classical channel.
         ax = plt.axes([0.125, 0.15, 0.62, 0.13], facecolor='w')
@@ -84,6 +78,7 @@ class UI:
                                       bbox=dict(facecolor='w',
                                                 edgecolor="none")))
         ax.add_artist(text)
+        self.cchl_ax = ax
 
         # Add the timestep slider.
         s_facecolour1 = "#eeeeee"
@@ -172,7 +167,7 @@ class UI:
         while (not self.paused and
                self.ui_timestep < self.protocol.num_iterations):
             self.next_tstep(pause=False)
-            plt.pause(0.25)
+            plt.pause(0.1)
 
     def pause(self, ev):
         self.paused = True
@@ -281,6 +276,62 @@ class UI:
                                      font_weight="bold",
                                      bbox=dict(facecolor='w'),
                                      ax=self.fig.axes[0])
+
+        # Display the keys
+        parties = network_manager.get_parties()
+        keys_str = ""
+        for uidA in parties_data:
+            partyA = parties[uidA]
+            sifted_keys = parties_data[uidA]["sifted_keys"]
+            sifted_keys_by_uid = shared_fns.reorder_by_uid(sifted_keys)
+            sifted_key_strs = shared_fns.convert_dod_to_dos(sifted_keys_by_uid)
+            for uidB in sifted_keys_by_uid:
+                partyB = parties[uidB]
+                keys_str += "{} <-> {} sifted key:\n{}\n\n".format(partyA.name,
+                                                                   partyB.name,
+                                                                   sifted_key_strs[uidB].replace(" ", ""))
+
+        for uidA in parties_data:
+            partyA = parties[uidA]
+            if not partyA.is_eve:
+                check_bits = parties_data[uidA]["check_bits"]
+                check_bits_by_uid = shared_fns.reorder_by_uid(check_bits)
+                check_bit_strs = shared_fns.convert_dod_to_dos(check_bits_by_uid)
+                for uidB in check_bits_by_uid:
+                    partyB = parties[uidB]
+                    if not partyB.is_eve:
+                        keys_str += "{} <-> {} check bits:\n{}\n\n".format(partyA.name,
+                                                                           partyB.name,
+                                                                           check_bit_strs[uidB].replace(" ", ""))
+
+        for uidA in parties_data:
+            partyA = parties[uidA]
+            secret_keys = parties_data[uidA]["secret_keys"]
+            secret_keys_by_uid = shared_fns.reorder_by_uid(secret_keys)
+            secret_keys_strs = shared_fns.convert_dod_to_dos(secret_keys_by_uid)
+            for uidB in secret_keys_by_uid:
+                partyB = parties[uidB]
+                keys_str += "{} <-> {} secret key:\n{}\n\n".format(partyA.name,
+                                                                   partyB.name,
+                                                                   secret_keys_strs[uidB].replace(" ", ""))
+
+        text = AnchoredText(keys_str, loc=3,  # Lower left
+                            prop=dict(fontfamily="monospace",
+                                      wrap=True,
+                                      bbox=dict(facecolor='w',
+                                                edgecolor="none")))
+        self.keys_ax.clear()
+        self.keys_ax.add_artist(text)
+
+
+        plt.sca(self.fig.axes[0])
+        protocol_data = tstep_data["protocol"]
+        display_string = "Key length: {}\nSecurity: {}".format(protocol_data["key_length"],
+                                                               protocol_data["security"])
+        plt.text(0.0, 1.0, display_string,
+                 horizontalalignment='center',
+                 verticalalignment='top',
+                 transform=self.fig.axes[0].transAxes)
 
 def main():
     ui = UI()

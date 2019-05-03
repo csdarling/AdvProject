@@ -18,11 +18,17 @@ class QKDProtocol:
         self.check_bit_prob = check_bit_prob
         self.eavesdropping = False
         self.intercepted_edges = []
+        self.computation_time = None
+        self.memory_usage = None
 
     def reset(self):
         '''Reset the protocol to its configuration at timestep 0.'''
         self.timestep = 0
         self.num_iterations = 0
+        self.num_generated_states = 0
+        self.security = 0
+        self.key_length = 0
+        self.stored_data = {}
         self.cchl.reset()
         self.network_manager.reset()
         self.protocol_secure = True
@@ -50,16 +56,25 @@ class QKDProtocol:
         '''Store the data from this timestep and set up for the next timestep.'''
         self.cchl.next_timestep()
         self.network_manager.next_timestep()
+        self.stored_data[self.num_iterations] = {
+            "security": self.security,
+            "key_length": self.key_length
+        }
         self.timestep += 1
 
     def store_timestep_data(self):
         '''Store the data from this timestep.'''
         self.cchl.store_timestep_data()
         self.network_manager.store_timestep_data()
+        self.stored_data[self.num_iterations] = {
+            "security": self.security,
+            "key_length": self.key_length
+        }
 
     def get_stored_data_for_timestep(self, timestep):
         '''Retrieve all of the stored data for a given timestep.'''
         stored_data = {
+            "protocol": copy.deepcopy(self.stored_data[timestep]),
             "cchl": self.cchl.get_stored_data_for_timestep(timestep),
             "parties": self.network_manager.get_party_stored_data_for_timestep(timestep),
             "qchls": self.network_manager.get_qchl_stored_data_for_timestep(timestep)
@@ -82,6 +97,9 @@ class QKDProtocol:
                 self.next_timestep()
             else:
                 self.store_timestep_data()
+            # Update the security and the key length fields
+            self.update_security()
+            self.update_key_length()
             # Increment the iteration counter.
             self.num_iterations += 1
 
@@ -157,6 +175,24 @@ class QKDProtocol:
                     min_check_bits = key_length
 
         return min_check_bits
+
+    def update_key_length(self):
+        self.key_length = self.get_shortest_key_length()
+
+    def update_security(self):
+        # Given n matching check bits, calculate the least upper bound for the
+        # probability that Eve has gotten away with eavesdropping.
+        num_check_bits = self.get_shortest_check_bits()
+        security = 0
+        upper_bound = 1
+        while upper_bound - security > 0.0001:
+            candidate = security + (upper_bound - security) / 2
+            n = self.required_num_check_bits(candidate)
+            if n > num_check_bits:
+                upper_bound = candidate
+            elif n <= num_check_bits:
+                security = candidate
+        self.security = security
 
     def calculate_qubit_counts(self):
         '''
@@ -321,22 +357,15 @@ class BB84(QKDProtocol):
         valid_bases = [consts.STD_BASIS, consts.HAD_BASIS]
 
         # Bob randomly picks a basis.
-        # bob.choose_rx_basis(valid_bases)
         bob_basis = bob.choose_from(valid_bases)
-        bob.expect_tx_from(alice.uid)
-        bob.measure_wrt(bob_basis)
+        bob.set_basis(alice.uid, bob_basis)
 
         eve_basis = None
         if self.eavesdropping:
-            # eve.choose_rx_basis(valid_bases)
             eve_basis = eve.choose_from(valid_bases)
-            eve.expect_tx_from(alice.uid)
-            eve.measure_wrt(eve_basis)
-            # eve.forward_qubits_to(bob.uid)
+            eve.set_basis(alice.uid, eve_basis)
 
         # Alice randomly picks a bit and basis
-        # alice.choose_tx_bit(valid_bits)
-        # alice.choose_tx_basis(valid_bases)
         bit = alice.choose_from(valid_bits)
         alice_basis = alice.choose_from(valid_bases)
 
@@ -351,7 +380,6 @@ class BB84(QKDProtocol):
         # bob.compare_bases(alice.uid)
         # if self.eavesdropping:
         #     eve.compare_bases(alice.uid, bob.uid)
-
 
         # Retrieve the bases.
         tx_bases = self.cchl.get_tx_bases(self.timestep)
@@ -480,14 +508,13 @@ class ChainedBB84(QKDProtocol):
                 # Record that the next qubit received by this party should be
                 # measured w.r.t. this basis.
                 predecessor_uid = self.network_manager.get_predecessors(uid)[0]
-                parties[uid].next_qubit_is_from(predecessor_uid)
-                parties[uid].measure_next_qubit_wrt(basis)
+                parties[uid].set_basis(predecessor_uid, basis)
                 # After measurement, the qubit should be forwarded to the next
                 # party in the chain.
                 successors = self.network_manager.get_successors(uid)
                 if successors:
                     successor_uid = successors[0]
-                    parties[uid].forward_qubits_to(successor_uid)
+                    parties[uid].forward(predecessor_uid, successor_uid)
 
         # The first party in the chain generates a qubit using a random bit
         # and a random basis, and transmits it to the next party in the chain.
@@ -501,9 +528,10 @@ class ChainedBB84(QKDProtocol):
         bit = random.choice([0, 1])
         basis = random.choice([consts.STD_BASIS, consts.HAD_BASIS])
         # first_party.send_qubit(successor_uid, bit, basis)
-        coeffs = basis[bit]
-        state = first_party.generate_state(coeffs)
-        first_party.transmit(state, successor_uid)
+        # coeffs = basis[bit]
+        # state = first_party.generate_state(coeffs)
+        # first_party.transmit(state, successor_uid)
+        first_party.send_state(bit, basis, successor_uid)
 
         # Each party publicly announces the basis it used.
         first_party.broadcast_tx_bases(self.timestep)
